@@ -67,3 +67,70 @@ html, body, #root { height: 100%; }
 }
 
 .back-link-wrap { align-self: flex-start; margin: 8px 0 16px 8px; }
+
+/* Make the survey card use width without forcing horizontal scroll */
+.survey-card { width: min(1100px, 98vw); }
+
+/* Logo + title spacing */
+.brand-title { display: flex; align-items: center; gap: 14px; }
+.title-text { font-weight: 700; font-size: 22px; }
+
+/* WHO-5 matrix: compact, wraps headers, no horizontal scroll */
+.who-matrix {
+    width: 100%;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    overflow: hidden;      /* keeps borders tidy */
+    background: #fff;
+}
+
+/* Grid with: index | question | six scale columns */
+.who-row {
+    display: grid;
+    grid-template-columns: 36px 1fr repeat(6, minmax(110px, 1fr));
+    align-items: center;
+}
+
+.who-head { background: #eef4ff; font-weight: 600; }
+
+.who-cell {
+    padding: 8px 10px;              /* compact */
+    border-bottom: 1px solid #f0f2f5;
+    border-right: 1px solid #f0f2f5;
+}
+.who-row > .who-cell:last-child { border-right: none; }
+
+.who-idx { text-align: center; color: #6b7280; }
+.who-question-h, .who-question { text-align: left; }
+.who-question { line-height: 1.25; }
+
+/* Header cells wrap naturally into two lines */
+.who-hdr { text-align: center; }
+.who-hdr-label {
+    white-space: normal;             /* allow wrapping */
+    line-height: 1.15;
+    max-width: 14ch;                 /* encourages 2-line wrap */
+    margin: 0 auto 2px;
+}
+.who-hdr-num { font-size: 12px; color: #6b7280; }
+
+/* Radio cells: make whole cell clickable, keep tight height */
+.who-radio-cell {
+    display: flex; justify-content: center; align-items: center;
+    height: 40px; cursor: pointer;
+}
+.who-radio-cell input { cursor: pointer; }
+
+/* Footer actions: right-aligned, compact */
+.who-actions {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    justify-content: flex-end;
+}
+.who-score { color: #374151; }
+
+/* Slightly denser page spacing overall on this screen */
+.page-content .awsui_content-layout > .awsui_content-layout-inner { padding-top: 12px; }
+
+
