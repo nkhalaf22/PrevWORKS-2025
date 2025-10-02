@@ -7,6 +7,7 @@ import ManagerLogin from './pages/ManagerLogin'
 import ResidentLogin from './pages/ResidentLogin'
 import ResidentSurvey from './pages/ResidentSurvey'
 import ManagerDashboard from './pages/ManagerDashboard'
+import AuthChoose from "./pages/AuthChoose.jsx";
 
 export default function Router() {
     return (
@@ -18,6 +19,7 @@ export default function Router() {
             <Route path="/resident/register" element={<ResidentRegister />} />
             <Route path="/resident/survey" element={<ResidentSurvey />} />
             <Route path="/manager/dashboard" element={<ManagerDashboard />} />
+            <Route path="/auth/choose" element={<AuthChoose />} />
             <Route path="*" element={<Landing />} />
         </Routes>
     )

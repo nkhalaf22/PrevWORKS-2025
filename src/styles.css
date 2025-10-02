@@ -133,4 +133,53 @@ html, body, #root { height: 100%; }
 /* Slightly denser page spacing overall on this screen */
 .page-content .awsui_content-layout > .awsui_content-layout-inner { padding-top: 12px; }
 
+/* Card width like the mock */
+.auth-choice-card { width: clamp(520px, 48vw, 720px); display: grid; gap: 18px; }
+
+/* Primary buttons */
+.choice-btn {
+    width: 100%;
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 10px;
+    padding: 14px 18px;
+    border-radius: 14px;
+    font-size: 18px; font-weight: 600;
+    text-decoration: none;
+    transition: transform .03s ease, box-shadow .15s ease, background .15s ease, border-color .15s;
+}
+
+/* Google (outlined) */
+.choice-google {
+    background: #fff;
+    border: 2px solid #3b82f6;     /* blue outline like your example */
+    color: #111;
+    box-shadow: 0 2px 6px rgba(0,0,0,.05);
+}
+.choice-google:hover { background:#f9fbff; }
+.choice-google:disabled { opacity:.7; cursor:not-allowed; }
+
+/* Email (filled) */
+.choice-email {
+    background: #4f46e5;           /* indigo */
+    border: 2px solid #4f46e5;
+    color: #fff;
+    box-shadow: 0 10px 24px rgba(79,70,229,.24);
+}
+.choice-email:hover { filter: brightness(1.05); }
+
+/* Divider "OR" */
+.choice-divider {
+    display:flex; align-items:center; gap: 12px;
+    color:#6b7280; font-weight:600; letter-spacing:.08em;
+}
+.choice-divider::before, .choice-divider::after {
+    content:""; flex:1; height:1px; background:#e5e7eb;
+}
+
+/* Footer link + error */
+.choice-footer { margin-top: 6px; text-align: center; color:#374151; }
+.choice-login-link { color:#6d28d9; font-weight:700; text-decoration: underline; }
+.choice-error { margin-top: 8px; color:#b91c1c; font-weight:600; }
+.g-icon { margin-right: 2px; }
+
 
