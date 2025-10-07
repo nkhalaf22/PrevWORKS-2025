@@ -1,6 +1,6 @@
 import React from 'react'
 import { Link } from 'react-router-dom'
-import logo from '../assets/prevworks-logo.svg'
+import logo from '../assets/prevworks-logo.png'
 
 export default function Brand({ to = '/', size = 'lg', center = true }) {
     return (
