@@ -16,12 +16,13 @@ export default function ManagerLogin() {
     async function onSubmit(e) {
         e?.preventDefault()
         setError(null)
-        if (!form.username.trim()) return setError('Username is required.')
+        if (!form.password.trim()) return setError('Password is required.')
         if (!isEmail(form.email))   return setError('Enter a valid email address.')
 
         setLoading(true)
         try {
-            const res = await loginManager({ username: form.username.trim(), email: form.email.trim().toLowerCase() })
+            const res = await loginManager({email: form.email.trim().toLowerCase(), password: form.password.trim() })
+            console.log(res)
             if (res?.ok) navigate('/manager/dashboard', { replace: true })
             else throw new Error('Login failed.')
         } catch (err) {
@@ -40,11 +41,11 @@ export default function ManagerLogin() {
                 </SpaceBetween>
             }>
                 <SpaceBetween size="l">
-                    <FormField label="Username">
-                        <Input value={form.username} onChange={on('username')} autoComplete="username" />
-                    </FormField>
                     <FormField label="Email">
                         <Input value={form.email} onChange={on('email')} autoComplete="email" />
+                    </FormField>
+                    <FormField label="Password">
+                        <Input value={form.password} onChange={on('password')} autoComplete="current-password" type="password" />
                     </FormField>
                     <div className="auth-subtle-link">
                         New program? <Link to="/program/register">Create your program</Link>

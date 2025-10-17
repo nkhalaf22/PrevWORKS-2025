@@ -1,7 +1,7 @@
 // FRONT-END STUBS ONLY — replace these with real Firebase/Firestore calls.
 // Each function should throw an Error on failure and return a simple object on success.
 import { auth, db } from './firebase';
-import {createUserWithEmailAndPassword } from "firebase/auth";
+import {createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore"; 
 
 export async function registerProgram({ name, city, state, departments = [], managerFirstName, managerLastName, managerEmail, password }) {
@@ -16,6 +16,9 @@ export async function registerProgram({ name, city, state, departments = [], man
     .catch((error) => {
         const errorCode = error.code;
         const errorMessage = error.message;
+        console.error("Authentication failed:", errorCode, errorMessage);
+
+        throw new Error(errorMessage);
         // ..
     });
     // Pretend the backend generates a unique programId (e.g., 'PW-ABC123')
@@ -49,10 +52,18 @@ export async function loginResident({ username, email }) {
     return { ok: true, role: 'resident' };
 }
 
-export async function loginManager({ username, email }) {
+export async function loginManager({ email, password }) {
     await sleep(400);
-    // TODO: replace with real auth; throw on failure
-    return { ok: true, role: 'manager' };
+    try {
+        const userCredential = await signInWithEmailAndPassword(auth, email, password)
+        // Signed in
+        const user = userCredential.user
+        return { ok: true, role: 'manager', uid: user?.uid }
+    } catch (error) {
+        const errorCode = error.code
+        const errorMessage = error.message
+        return { ok: false }
+    }
 }
 
 // utility
