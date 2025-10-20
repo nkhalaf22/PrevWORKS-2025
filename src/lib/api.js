@@ -2,7 +2,7 @@
 // Each function should throw an Error on failure and return a simple object on success.
 import { auth, db } from './firebase';
 import {createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
-import { doc, setDoc } from "firebase/firestore"; 
+import { doc, setDoc, collection, query, where, getDocs } from "firebase/firestore"; 
 
 export async function registerProgram({ name, city, state, departments = [], managerFirstName, managerLastName, managerEmail, password }) {
     // TODO: replace with real backend call
@@ -39,17 +39,49 @@ export async function registerProgram({ name, city, state, departments = [], man
     return { programId };
 }
 
-export async function registerResident({ programId, username, password }) {
+export async function registerResident({ programId, email, password, department, firstName, lastName }) {
     // TODO: replace with real backend call
     await sleep(450);
+    createUserWithEmailAndPassword(auth, email, password)
+    .then((userCredential) => {
+        // Signed up 
+        const user = userCredential.user;
+        // ...
+    })
+    .catch((error) => {
+        const errorCode = error.code;
+        const errorMessage = error.message;
+        console.error("Authentication failed:", errorCode, errorMessage);
+
+        throw new Error(errorMessage);
+        // ..
+    });
+    //set up Firestore documents 
+    await setDoc(doc(db, "resident_info", auth.currentUser.uid), {
+        department: department,
+        email: email,
+        first_name: firstName,
+        last_name: lastName,
+        program_id: programId,
+        resident_id: auth.currentUser.uid
+    });
+
     return { ok: true };
 }
 
 // --- add these to your existing stubs --- //
-export async function loginResident({ username, email }) {
+export async function loginResident({ email, password }) {
     await sleep(400);
-    // TODO: replace with real auth; throw on failure
-    return { ok: true, role: 'resident' };
+    try {
+        const userCredential = await signInWithEmailAndPassword(auth, email, password)
+        // Signed in
+        const user = userCredential.user
+        return { ok: true, role: 'resident', uid: user?.uid }
+    } catch (error) {
+        const errorCode = error.code
+        const errorMessage = error.message
+        return { ok: false }
+    }
 }
 
 export async function loginManager({ email, password }) {
@@ -63,6 +95,25 @@ export async function loginManager({ email, password }) {
         const errorCode = error.code
         const errorMessage = error.message
         return { ok: false }
+    }
+}
+
+export async function getDepartments(programId) {
+    // Query Firestore for the manager_info document that has this program_id and return its departments
+    await sleep(100)
+    if (!programId || typeof programId !== 'string' || !programId.trim()) {
+        throw new Error('Invalid programId')
+    }
+    try {
+        const q = query(collection(db, 'manager_info'), where('program_id', '==', programId))
+        const snap = await getDocs(q)
+        if (snap.empty) return []
+        const docSnap = snap.docs[0]
+        const data = docSnap.data() || {}
+        return Array.isArray(data.departments) ? data.departments : []
+    } catch (err) {
+        console.error('getDepartments error:', err)
+        throw err
     }
 }
 
