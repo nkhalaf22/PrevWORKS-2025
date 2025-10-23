@@ -14,6 +14,7 @@ import {
   LineChart,
   BarChart
 } from '@cloudscape-design/components'
+import Brand from '../components/Brand'
 
 // ---------------- Metric-Specific Mock Data ---------------------------------
 // CG-CAHPS trend (0–100 composite)
@@ -476,7 +477,16 @@ export default function DashboardPage() {
   return (
     <AppLayout
       content={
-        <ContentLayout header={<Header variant="h1">General Overview</Header>}>
+        <ContentLayout
+          header={
+            <Header variant="h1">
+              <div className="brand-title">
+                <Brand size="lg" center={false} />
+                <span className="title-text">General Overview</span>
+              </div>
+            </Header>
+          }
+        >
           <SpaceBetween size="l">
 
             {/* Filters Row */}
