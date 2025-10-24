@@ -39,11 +39,13 @@ export default function ResidentSurvey() {
         setSubmitted(false)
     }
 
-    const submit = () => {
+    const submit = async () => {
         if (!canSubmit) return
-        submitResidentWho5(answers)
+        await submitResidentWho5({
+            q1: answers[0], q2: answers[1], q3: answers[2], q4: answers[3], q5: answers[4]
+        })
         setSubmitted(true)
-        navigate('/resident/dashboard', { replace: true })
+        navigate('/resident/dashboard', {replace: true})
     }
 
     return (

@@ -39,6 +39,9 @@ if (import.meta.env.PROD) {
         if (ok && firebaseConfig.measurementId) analytics = getAnalytics(app)
     }).catch(() => {})
 }
+
+const USE_EMULATORS = import.meta.env.VITE_USE_EMULATORS === 'true';
+if (USE_EMULATORS)
 if (import.meta.env.DEV) {
     connectFirestoreEmulator(db, 'localhost', 8080)
     connectAuthEmulator(auth, 'http://localhost:9099')
