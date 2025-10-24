@@ -22,7 +22,7 @@ export default function ResidentLogin() {
         setLoading(true)
         try {
             const res = await loginResident({ email: form.email.trim().toLowerCase(), password: form.password.trim() })
-            if (res?.ok) navigate('/resident/survey', { replace: true })
+            if (res?.ok) navigate('/resident/dashboard', { replace: true })
             else throw new Error('Login failed.')
         } catch (err) {
             setError(err?.message || 'Login failed.')
