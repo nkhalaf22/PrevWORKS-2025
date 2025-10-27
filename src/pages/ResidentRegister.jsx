@@ -56,7 +56,7 @@ export default function ResidentRegister() {
 
         setLoading(true)
         try {
-            await registerResident({
+            const res =await registerResident({
                 programId: pid,
                 email: form.email.trim(),
                 password: form.password,
@@ -65,8 +65,9 @@ export default function ResidentRegister() {
                 lastName: form.lastName.trim()
             })
             setDone(true)
-            // if you want to push them to login immediately:
-            // navigate('/resident/login', { replace: true })
+            if (res?.ok) {
+                navigate('/resident/survey', { replace: true })
+            }
         } catch (err) {
             setError(err?.message || 'Could not create account.')
         } finally { setLoading(false) }
