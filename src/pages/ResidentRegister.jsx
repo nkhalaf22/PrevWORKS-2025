@@ -56,7 +56,7 @@ export default function ResidentRegister() {
 
         setLoading(true)
         try {
-            const res =await registerResident({
+            const res = await registerResident({
                 programId: pid,
                 email: form.email.trim(),
                 password: form.password,
