@@ -4,7 +4,7 @@ import { auth, db } from './firebase';
 import {createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
 import { doc, setDoc, collection, query, where, getDocs } from "firebase/firestore"; 
 
-export async function registerProgram({ name, city, state, departments = [], managerFirstName, managerLastName, managerEmail, password }) {
+export async function registerProgram({ name, city, state, departments = [], managerFirstName, managerLastName, managerEmail, password, programId }) {
     // TODO: replace with real backend call
     await sleep(600);
     try {
@@ -13,10 +13,6 @@ export async function registerProgram({ name, city, state, departments = [], man
         const user = userCredential.user;
         const uid = user?.uid;
         // ...
-
-        // Pretend the backend generates a unique programId (e.g., 'PW-ABC123')
-        const programId = 'PW-' + Math.random().toString(36).slice(2, 8).toUpperCase();
-        //set up Firestore documents 
         await setDoc(doc(db, "manager_info", uid), {
             hospital_name: name,
             hospital_city: city,
@@ -96,6 +92,25 @@ export async function loginManager({ email, password }) {
         const errorCode = error.code
         const errorMessage = error.message
         return { ok: false }
+    }
+}
+
+export async function programRegistered(programId) {
+    // Query Firestore for the manager_info document that has this program_id and return its departments
+    await sleep(100)
+    if (!programId || typeof programId !== 'string' || !programId.trim()) {
+        throw new Error('Invalid programId')
+    }
+    try {
+        const q = query(collection(db, 'manager_info'), where('program_id', '==', programId))
+        const snap = await getDocs(q)
+        if (snap.empty) return ""
+        const docSnap = snap.docs[0]
+        const data = docSnap.data() || {}
+        return data
+    } catch (err) {
+        console.error('getDepartments error:', err)
+        throw err
     }
 }
 
