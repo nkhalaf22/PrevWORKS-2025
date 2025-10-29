@@ -1,12 +1,11 @@
 import React from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import Landing from './pages/Landing'
 import ProgramRegister from './pages/ProgramRegister'
 import ResidentRegister from './pages/ResidentRegister'
 import ManagerLogin from './pages/ManagerLogin'
 import ResidentLogin from './pages/ResidentLogin'
 import ResidentSurvey from './pages/ResidentSurvey'
-import ManagerDashboard from './pages/ManagerDashboard'
 import AuthChoose from "./pages/AuthChoose.jsx";
 import DashboardPage from './pages/Dashboard'
 import ResidentDashboard from "./pages/ResidentDashboard.jsx";
@@ -21,7 +20,7 @@ export default function Router() {
             <Route path="/resident/register" element={<ResidentRegister />} />
             <Route path="/resident/dashboard" element={<ResidentDashboard />} />
             <Route path="/resident/survey" element={<ResidentSurvey />} />
-            <Route path="/manager/dashboard" element={<ManagerDashboard />} />
+            <Route path="/manager/dashboard" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/auth/choose" element={<AuthChoose />} />
             <Route path="*" element={<Landing />} />
