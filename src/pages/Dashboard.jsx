@@ -129,9 +129,9 @@ function buildDistribution(residents) {
 
   residents.forEach(r => {
     const seg = segmentOf(r.score)
-    if (!segmentMap[seg]) segmentMap[seg] = { segment: seg, n: 0, responded: 0, totalScore: 0 }
-    segmentMap[seg].n++
-    if (r.responded) segmentMap[seg].responded++
+    if (!segmentMap[seg]) segmentMap[seg] = { segment: seg, cohortSize: 0, respondents: 0, totalScore: 0 }
+    segmentMap[seg].cohortSize++
+    if (r.responded) segmentMap[seg].respondents++
     segmentMap[seg].totalScore += r.score
 
     if (seg === 'Above Average') bySegment.above.push(r)
@@ -141,9 +141,10 @@ function buildDistribution(residents) {
 
   const segmentAgg = Object.values(segmentMap).map(o => ({
     segment: o.segment,
-    n: o.n,
-    responseRate: o.n ? Math.round((o.responded / o.n) * 100) : 0,
-    avgScore: o.n ? Math.round(o.totalScore / o.n) : 0
+    cohortSize: o.cohortSize,
+    respondents: o.respondents,
+    responseRate: o.cohortSize ? Math.round((o.respondents / o.cohortSize) * 100) : 0,
+    avgScore: o.cohortSize ? Math.round(o.totalScore / o.cohortSize) : 0
   })).sort((a, b) => a.segment.localeCompare(b.segment))
 
   // Department breakdown helper per segment
@@ -151,12 +152,12 @@ function buildDistribution(residents) {
     const total = list.length || 1
     const m = {}
     list.forEach(r => {
-      if (!m[r.dept]) m[r.dept] = { dept: r.dept, n: 0, sum: 0 }
-      m[r.dept].n++
+      if (!m[r.dept]) m[r.dept] = { dept: r.dept, cohortSize: 0, sum: 0 }
+      m[r.dept].cohortSize++
       m[r.dept].sum += r.score
     })
     return Object.values(m)
-      .map(d => ({ dept: d.dept, n: d.n, pct: Math.round((d.n / total) * 100), avg: Math.round(d.sum / d.n) }))
+      .map(d => ({ dept: d.dept, cohortSize: d.cohortSize, pct: Math.round((d.cohortSize / total) * 100), avg: Math.round(d.sum / d.cohortSize) }))
       .sort((a, b) => a.avg - b.avg)
   }
 
@@ -253,52 +254,70 @@ const DriverMetricsChart = ({ driverMetrics }) => {
 }
 
 // Alternate compact list visualization
-const DriverMetricBars = ({ driverMetrics }) => (
-  <SpaceBetween size="s">
-    {driverMetrics.map(m => {
-      const valuePct = Math.round(m.value * 100)
-      const benchPct = Math.round(m.benchmark * 100)
-      return (
-        <div key={m.name}>
-          <Box fontSize="body-s" margin={{ bottom: 'xxs' }}>{m.name}</Box>
-          <div
-            style={{
-              position: 'relative',
-              background: '#f1f5f9',
-              border: '1px solid #e2e8f0',
-              height: 16,
-              borderRadius: 4,
-              overflow: 'hidden'
-            }}
-          >
+const DriverMetricBars = ({ driverMetrics }) => {
+  // Reuse heatmap color scheme for consistency
+  const buckets = [
+    { max: 40, color: '#dc2626' },
+    { max: 50, color: '#f97316' },
+    { max: 60, color: '#facc15' },
+    { max: 70, color: '#22c55e' },
+    { max: Infinity, color: '#065f46' }
+  ]
+  const colorFor = v => {
+    for (const b of buckets) {
+      if (v < b.max) return b.color
+    }
+    return '#6b7280'
+  }
+  
+  return (
+    <SpaceBetween size="s">
+      {driverMetrics.map(m => {
+        const valuePct = Math.round(m.value * 100)
+        const benchPct = Math.round(m.benchmark * 100)
+        const barColor = colorFor(valuePct)
+        return (
+          <div key={m.name}>
+            <Box fontSize="body-s" margin={{ bottom: 'xxs' }}>{m.name}</Box>
             <div
               style={{
-                height: '100%',
-                width: `${valuePct}%`,
-                background: m.highlight ? '#facc15' : '#3b82f6',
-                transition: 'width .35s'
+                position: 'relative',
+                background: '#f1f5f9',
+                border: '1px solid #e2e8f0',
+                height: 16,
+                borderRadius: 4,
+                overflow: 'hidden'
               }}
-            />
-            <div
-              style={{
-                position: 'absolute',
-                left: `${benchPct}%`,
-                top: 0,
-                bottom: 0,
-                width: 2,
-                background: '#111827'
-              }}
-              title={`Benchmark ${benchPct}%`}
-            />
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: `${valuePct}%`,
+                  background: barColor,
+                  transition: 'width .35s'
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  left: `${benchPct}%`,
+                  top: 0,
+                  bottom: 0,
+                  width: 2,
+                  background: '#111827'
+                }}
+                title={`Benchmark ${benchPct}%`}
+              />
+            </div>
+            <Box fontSize="body-xxs" color="text-body-secondary" margin={{ top: 'xxs' }}>
+              {valuePct}% (benchmark {benchPct}%)
+            </Box>
           </div>
-          <Box fontSize="body-xxs" color="text-body-secondary" margin={{ top: 'xxs' }}>
-            {valuePct}% (benchmark {benchPct}%)
-          </Box>
-        </div>
-      )
-    })}
-  </SpaceBetween>
-)
+        )
+      })}
+    </SpaceBetween>
+  )
+}
 
 // Update Heatmap to accept filtered months/values via props
 const Heatmap = ({ months, values }) => {
@@ -377,36 +396,6 @@ const Heatmap = ({ months, values }) => {
     </div>
   )
 }
-
-const DistributionTable = ({ segmentAgg, avgWellness }) => (
-  <Table
-    items={segmentAgg}
-    columnDefinitions={[
-      { id:'segment', header:'Segment', cell:i=>i.segment },
-      { id:'n', header:'N', cell:i=>i.n },
-      { id:'response', header:'Response Rate', cell:i=> i.responseRate + '%' },
-      { id:'avg', header:'Avg Score', cell:i=> i.avgScore }
-    ]}
-    variant="embedded"
-    header={<Header variant="h3" description={`Mean Wellness: ${Math.round(avgWellness)}`}>Distribution</Header>}
-    stripedRows
-  />
-)
-
-const BelowAverageBreakdown = ({ items }) => (
-  <Table
-    items={items}
-    columnDefinitions={[
-      { id:'dept', header:'Department', cell:i=>i.dept },
-      { id:'n', header:'N', cell:i=>i.n },
-      { id:'pct', header:'% of Below Avg', cell:i=> i.pct + '%' },
-      { id:'avg', header:'Avg Score', cell:i=> i.avg }
-    ]}
-    variant="container"
-    header={<Header variant="h3" description="Departments within Below Average segment (sorted by avg score)">Below Average Detail</Header>}
-    stripedRows
-  />
-)
 
 // Helper: compute slice window for a selected time range
 function computeSliceWindow(rangeValue, total) {
@@ -582,7 +571,7 @@ export default function DashboardPage() {
                 status={wellnessClass}
               />
               <MetricCard title="Response Rate" value="87 %" />
-              <MetricCard title="N" value={residents.length} />
+              <MetricCard title="Cohort Size" value={residents.length} />
               <Container header={<Header variant="h3">Driver Metrics</Header>}>
                 <DriverMetricsChart driverMetrics={driverMetrics} />
                 <Box margin={{ top: 'xs' }} fontSize="body-xxs" color="text-body-secondary">
@@ -657,7 +646,7 @@ const DistributionSection = ({
   nearBelowCount,
   wellnessDelta
 }) => {
-  const getSeg = name => segmentAgg.find(s => s.segment === name) || { n: 0, responseRate: 0, avgScore: 0 }
+  const getSeg = name => segmentAgg.find(s => s.segment === name) || { cohortSize: 0, respondents: 0, responseRate: 0, avgScore: 0 }
   const above = getSeg('Above Average')
   const average = getSeg('Average')
   const below = getSeg('Below Average')
@@ -666,8 +655,12 @@ const DistributionSection = ({
     <Container header={<Header variant="h3">{title}</Header>}>
       <SpaceBetween size="xs">
         <Box>
-          <Box variant="awsui-key-label">N</Box>
-          <Box>{data.n}</Box>
+          <Box variant="awsui-key-label">Cohort Size</Box>
+          <Box>{data.cohortSize}</Box>
+        </Box>
+        <Box>
+          <Box variant="awsui-key-label">Respondents</Box>
+          <Box>{data.respondents}</Box>
         </Box>
         <Box>
           <Box variant="awsui-key-label">Response rate</Box>
@@ -712,7 +705,7 @@ const DistributionSection = ({
           items={belowAvgDeptBreakdown}
           columnDefinitions={[
             { id: 'dept', header: 'Department', cell: i => i.dept },
-            { id: 'n', header: 'N', cell: i => i.n },
+            { id: 'cohortSize', header: 'Cohort Size', cell: i => i.cohortSize },
             { id: 'pct', header: '% of Below Avg', cell: i => i.pct + '%' },
             { id: 'avg', header: 'Avg Score', cell: i => i.avg }
           ]}
@@ -728,7 +721,7 @@ const DistributionSection = ({
             items={avgDeptBreakdown.slice(0, 5)}
             columnDefinitions={[
               { id: 'dept', header: 'Department', cell: i => i.dept },
-              { id: 'n', header: 'N', cell: i => i.n },
+              { id: 'cohortSize', header: 'Cohort Size', cell: i => i.cohortSize },
               { id: 'avg', header: 'Avg Score', cell: i => i.avg }
             ]}
             variant="embedded"
@@ -740,7 +733,7 @@ const DistributionSection = ({
             items={aboveDeptBreakdown.slice(0, 5)}
             columnDefinitions={[
               { id: 'dept', header: 'Department', cell: i => i.dept },
-              { id: 'n', header: 'N', cell: i => i.n },
+              { id: 'cohortSize', header: 'Cohort Size', cell: i => i.cohortSize },
               { id: 'avg', header: 'Avg Score', cell: i => i.avg }
             ]}
             variant="embedded"
