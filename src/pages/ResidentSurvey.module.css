@@ -1,0 +1,141 @@
+/* No custom background here → matches the rest of the app */
+.page {
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 24px 16px;
+}
+
+.cardWrap {
+    width: min(1100px, 96vw);
+    margin-inline: auto;
+}
+
+.input {
+    width: 320px;
+    padding: 8px 10px;
+    border: 1px solid #aab7b8;
+    border-radius: 8px;
+    background: #fff;
+}
+
+/* Brand/title spacing */
+.brandTitle { display: flex; align-items: center; gap: 12px; }
+.titleText  { font-weight: 700; font-size: 22px; }
+
+/* Matrix container */
+.whoMatrix {
+    width: 100%;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    background: #fff;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0,0,0,.04);
+}
+
+/* Grid: index | question | scale (the scale section wraps internally) */
+.whoRow {
+    display: grid;
+    grid-template-columns: 52px minmax(260px, 2fr) 1fr;
+    align-items: stretch;
+}
+
+.whoHead {
+    background: #eef3fb;
+    font-weight: 600;
+    border-bottom: 1px solid #e1e6f0;
+}
+
+.whoCell {
+    padding: 12px 14px;
+    border-right: 1px solid #eef1f5;
+}
+.whoRow > .whoCell:last-child { border-right: none; }
+
+.whoIdx { text-align: center; color: #6b7280; }
+.whoQuestionH, .whoQuestion { text-align: left; }
+
+/* Scale header (wrap 6 → 3×2 → 2×3) */
+.scaleHead {
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(120px, 1fr));
+    gap: 0;
+}
+.scaleHeadCell {
+    padding: 12px 8px;
+    border-left: 1px solid #eef1f5;
+    text-align: center;
+}
+.scaleHeadCell:first-child { border-left: none; }
+
+.whoHdrLabel {
+    white-space: normal;
+    line-height: 1.15;
+    max-width: 18ch;
+    margin: 0 auto 2px;
+}
+.whoHdrNum { font-size: 12px; color: #6b7280; }
+
+/* Body zebra + hover */
+.whoRow:not(.whoHead) { border-top: 1px solid #f1f3f6; }
+.whoRow:nth-child(odd):not(.whoHead) { background: #fafbfe; }
+.whoRow:not(.whoHead):hover { background: #f5f8ff; }
+
+/* Scale row (radio choices wrap) */
+.scaleRow {
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(120px, 1fr));
+}
+.scaleChoice {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 54px;
+    border-left: 1px solid #eef1f5;
+    cursor: pointer;
+}
+.scaleChoice:first-child { border-left: none; }
+.scaleChoice input {
+    width: 20px; height: 20px; cursor: pointer; accent-color: #3b82f6;
+}
+.scaleNum { font-size: 12px; color: #6b7280; }
+
+/* Actions/footer */
+.whoActions {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    justify-content: flex-end;
+}
+.whoScore { color: #374151; }
+
+/* ---------- Responsiveness ---------- */
+
+/* Medium: tighten columns a bit */
+@container (inline-size > 900px) {}
+
+/* Below 1000px: narrower scale columns */
+@media (max-width: 1150px) {
+    .scaleHead { grid-template-columns: repeat(6, minmax(100px, 1fr)); }
+    .scaleRow  { grid-template-columns: repeat(6, minmax(100px, 1fr)); }
+}
+
+/* Below 860px: wrap scales to 3 columns (2 rows) */
+@media (max-width: 1000px) {
+    .scaleHead { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+    .scaleRow  { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+    .whoCell   { padding: 10px 12px; }
+}
+
+/* Below 640px: wrap scales to 2 columns (3 rows) and shrink padding/controls */
+@media (max-width: 850px) {
+    .whoRow { grid-template-columns: 40px minmax(180px, 2fr) 1fr; }
+    .scaleHead { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+    .scaleRow  { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+    .scaleChoice { height: 46px; gap: 6px; }
+    .scaleChoice input { width: 18px; height: 18px; }
+    .whoHdrLabel { max-width: 16ch; }
+}

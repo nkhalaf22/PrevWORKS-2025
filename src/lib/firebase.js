@@ -3,6 +3,9 @@ import { getAuth, setPersistence, browserLocalPersistence,
     GoogleAuthProvider } from 'firebase/auth'
 import { getAnalytics, isSupported as analyticsSupported } from 'firebase/analytics'
 import { getFirestore } from 'firebase/firestore'
+import { getFunctions, connectFunctionsEmulator } from 'firebase/functions'
+import { connectFirestoreEmulator } from 'firebase/firestore'
+import { connectAuthEmulator } from 'firebase/auth'
 
 
 const firebaseConfig = {
@@ -35,4 +38,13 @@ if (import.meta.env.PROD) {
     analyticsSupported().then(ok => {
         if (ok && firebaseConfig.measurementId) analytics = getAnalytics(app)
     }).catch(() => {})
+}
+
+const USE_EMULATORS = import.meta.env.VITE_USE_EMULATORS === 'true';
+if (USE_EMULATORS)
+if (import.meta.env.DEV) {
+    connectFirestoreEmulator(db, 'localhost', 8080)
+    connectAuthEmulator(auth, 'http://localhost:9099')
+    const functions = getFunctions(app)
+    connectFunctionsEmulator(functions, 'localhost', 5001)
 }

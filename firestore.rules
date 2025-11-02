@@ -1,0 +1,51 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Manager profiles - managers can read/write their own profile
+    match /manager_info/{managerId} {
+      allow read, write: if request.auth != null && request.auth.uid == managerId;
+    }
+    
+    // Resident profiles - residents can read/write their own profile
+    match /resident_info/{residentId} {
+      allow read, write: if request.auth != null && request.auth.uid == residentId;
+      
+      // Resident surveys - residents can write their own surveys
+      match /surveys/{surveyId} {
+        allow read, write: if request.auth != null && request.auth.uid == residentId;
+      }
+    }
+    
+    // Program data - managers can read data for their program only
+    match /programs/{programId} {
+      allow read: if request.auth != null && 
+                     exists(/databases/$(database)/documents/manager_info/$(request.auth.uid)) &&
+                     get(/databases/$(database)/documents/manager_info/$(request.auth.uid)).data.program_id == programId;
+      
+      // Anonymous surveys - managers can read, cloud functions can write
+      match /anon_surveys/{surveyId} {
+        allow read: if request.auth != null && 
+                       exists(/databases/$(database)/documents/manager_info/$(request.auth.uid)) &&
+                       get(/databases/$(database)/documents/manager_info/$(request.auth.uid)).data.program_id == programId;
+        allow write: if false; // Only Cloud Functions can write
+      }
+      
+      // Department weekly aggregates - managers can read, cloud functions can write
+      match /dept_weekly/{weekId} {
+        allow read: if request.auth != null && 
+                       exists(/databases/$(database)/documents/manager_info/$(request.auth.uid)) &&
+                       get(/databases/$(database)/documents/manager_info/$(request.auth.uid)).data.program_id == programId;
+        allow write: if false; // Only Cloud Functions can write
+      }
+      
+      // CG-CAHPS driver metrics - managers can read and write their own program's data
+      match /cgcahps/{docId} {
+        allow read, write: if request.auth != null && 
+                             exists(/databases/$(database)/documents/manager_info/$(request.auth.uid)) &&
+                             get(/databases/$(database)/documents/manager_info/$(request.auth.uid)).data.program_id == programId;
+      }
+    }
+  }
+}

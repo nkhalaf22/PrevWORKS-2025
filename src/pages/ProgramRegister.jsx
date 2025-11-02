@@ -3,7 +3,7 @@ import { Button, Form, FormField, Input, SpaceBetween, Alert, StatusIndicator, B
 import { Link, useNavigate } from 'react-router-dom'
 import AuthCard from '../components/AuthCard'
 import PasswordField from '../components/PasswordField'
-import { registerProgram } from '../lib/api'
+import { registerProgram, programRegistered } from '../lib/api'
 
 export default function ProgramRegister() {
     const [form, setForm] = React.useState({
@@ -13,6 +13,11 @@ export default function ProgramRegister() {
     const [loading, setLoading] = React.useState(false)
     const [error, setError] = React.useState(null)
     const [programId, setProgramId] = React.useState(null)
+    const [mode, setMode] = React.useState('new') // 'new' or 'existing'
+    const [existingId, setExistingId] = React.useState('')
+    const [existingData, setExistingData] = React.useState(null)
+    const [lookupLoading, setLookupLoading] = React.useState(false)
+    const [lookupError, setLookupError] = React.useState(null)
     const navigate = useNavigate()
 
     // robust onChange handler: Cloudscape Select uses e.detail.selectedOption, Inputs use e.detail.value
@@ -54,19 +59,35 @@ export default function ProgramRegister() {
     async function onSubmit(e) {
         e?.preventDefault()
         setError(null)
+        // if registering for an existing program, require that we fetched the program data
+        if (mode === 'existing') {
+            if (!existingData) return setError('Please enter a valid Program ID and confirm it.')
+        }
 
         // simple client-side validation
-        if (!form.name.trim() || !form.city.trim() || !form.state.trim()) return setError('Program name, city, and state are required.')
+        // If new program, require program fields; if existing, hospital fields come from existingData
+        if (mode === 'new' && (!form.name.trim() || !form.city.trim() || !form.state.trim())) return setError('Program name, city, and state are required.')
         if (!form.managerFirstName.trim()) return setError('Manager first name is required.')
         if (!form.managerLastName.trim()) return setError('Manager last name is required.')
         if (!form.managerEmail.trim()) return setError('Manager email is required.')
         if (form.password.length < 6) return setError('Password must be at least 6 characters.')
         if (form.password !== form.confirm) return setError('Passwords do not match.')
-        if (form.departments.length === 0) return setError('At least one department is required.')
+        if (mode === 'new' && form.departments.length === 0) return setError('At least one department is required.')
 
         setLoading(true)
         try {
-            const { programId } = await registerProgram({
+            // If existing, copy the hospital/program fields from existingData
+            const payload = mode === 'existing' && existingData ? {
+                name: existingData.hospital_name || form.name.trim(),
+                city: existingData.hospital_city || form.city.trim(),
+                state: existingData.hospital_state || form.state.trim(),
+                departments: Array.isArray(existingData.departments) ? existingData.departments : form.departments,
+                managerFirstName: form.managerFirstName.trim(),
+                managerLastName: form.managerLastName.trim(),
+                managerEmail: form.managerEmail.trim().toLowerCase(),
+                password: form.password,
+                programId: (existingId || '').trim().toUpperCase()
+            } : {
                 name: form.name.trim(),
                 city: form.city.trim(),
                 state: form.state.trim(),
@@ -74,12 +95,35 @@ export default function ProgramRegister() {
                 managerFirstName: form.managerFirstName.trim(),
                 managerLastName: form.managerLastName.trim(),
                 managerEmail: form.managerEmail.trim().toLowerCase(),
-                password: form.password
-            })
+                password: form.password,
+                programId: 'PW-' + Math.random().toString(36).slice(2, 8).toUpperCase()
+            }
+
+            const { programId } = await registerProgram(payload)
             setProgramId(programId)
         } catch (err) {
             setError(err?.message || 'Could not register program.')
         } finally { setLoading(false) }
+    }
+
+    async function checkExistingProgram() {
+        const pid = (existingId || '').trim().toUpperCase()
+        setLookupError(null)
+        setExistingData(null)
+        if (!pid) return setLookupError('Program ID is required.')
+        setLookupLoading(true)
+        try {
+            const data = await programRegistered(pid)
+            if (!data || Object.keys(data).length === 0) {
+                setLookupError('Program not found.')
+            } else {
+                setExistingData(data)
+                // populate visible form fields with fetched data (optional)
+                setForm(cur => ({ ...cur, name: data.hospital_name || cur.name, city: data.hospital_city || cur.city, state: data.hospital_state || cur.state, departments: Array.isArray(data.departments) ? data.departments : cur.departments }))
+            }
+        } catch (err) {
+            setLookupError('Lookup failed. Try again.')
+        } finally { setLookupLoading(false) }
     }
 
     async function copyId() {
@@ -104,7 +148,7 @@ export default function ProgramRegister() {
                                 disabled={!!programId}
                                 aria-disabled={!!programId}
                             >
-                                Program Created
+                                    {mode === 'existing' ? 'Manager Registered' : 'Program Created'}
                             </Button>
                         </div>
                     ) : (
@@ -113,23 +157,50 @@ export default function ProgramRegister() {
                             loading={loading}
                             onClick={onSubmit}
                         >
-                            Create Program
+                            {mode === 'existing' ? 'Register Manager' : 'Create Program'}
                         </Button>
                     )}
                 </SpaceBetween>
             }>
                 <SpaceBetween size="l">
-                    <FormField label="Hospital Name *"><Input value={form.name} onChange={on('name')}/></FormField>
-                    <FormField label="Hospital City *"><Input value={form.city} onChange={on('city')}/></FormField>
-                    <FormField label="Hospital State *">
-                        <Select
-                            options={STATE_OPTIONS}
-                            selectedOption={STATE_OPTIONS.find(o => o.value === form.state) || null}
-                            onChange={on('state')}
-                            placeholder="Select state"
-                        />
-                    </FormField>
-                    <FormField label="Hospital Departments (add your own) *">
+                    <div style={{display: 'flex', gap: 8, alignItems: 'center'}}>
+                        <Button variant={mode === 'new' ? 'primary' : 'normal'} onClick={() => { setMode('new'); setExistingData(null); setExistingId(''); setLookupError(null) }}>Register new program</Button>
+                        <Button variant={mode === 'existing' ? 'primary' : 'normal'} onClick={() => { setMode('existing'); setProgramId(null); setError(null) }}>Register for existing program</Button>
+                    </div>
+
+                    {mode === 'existing' && (
+                        <>
+                            <FormField label="Program ID to join">
+                                <div style={{display: 'flex', gap: 8}}>
+                                    <Input value={existingId} onChange={e => { setLookupError(null); setExistingId(e?.detail?.value ?? e?.target?.value ?? '') }} placeholder="PW-ABC123" />
+                                    <Button variant="primary" loading={lookupLoading} onClick={checkExistingProgram}>Check</Button>
+                                </div>
+                                {lookupError && <div style={{color: '#b3261e', marginTop: 8}}>{lookupError}</div>}
+                            </FormField>
+                            {existingData && (
+                                <Box variant="p" color="text-body-secondary">Found program: <strong>{existingData.hospital_name}</strong> — {existingData.hospital_city}, {existingData.hospital_state}</Box>
+                            )}
+                        </>
+                    )}
+
+                    {mode === 'new' && (
+                        <FormField label="Hospital Name *"><Input value={form.name} onChange={on('name')}/></FormField>
+                    )}
+                    {mode === 'new' && (
+                        <>
+                            <FormField label="Hospital City *"><Input value={form.city} onChange={on('city')}/></FormField>
+                            <FormField label="Hospital State *">
+                                <Select
+                                    options={STATE_OPTIONS}
+                                    selectedOption={STATE_OPTIONS.find(o => o.value === form.state) || null}
+                                    onChange={on('state')}
+                                    placeholder="Select state"
+                                />
+                            </FormField>
+                        </>
+                    )}
+                    {mode === 'new' && (
+                        <FormField label="Hospital Departments (add your own) *">
                         <div style={{display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap'}}>
                             <Input placeholder="e.g. Emergency / ER" value={deptInput} onChange={e => setDeptInput(e?.detail?.value ?? e?.target?.value ?? '')} />
                             <Button variant="primary" onClick={addDepartment}>Add</Button>
@@ -144,7 +215,8 @@ export default function ProgramRegister() {
                                 ))}
                             </div>
                         )}
-                    </FormField>
+                        </FormField>
+                    )}
                     <FormField label="Manager First Name *"><Input value={form.managerFirstName} onChange={on('managerFirstName')}/></FormField>
                     <FormField label="Manager Last Name *"><Input value={form.managerLastName} onChange={on('managerLastName')}/></FormField>
                     <FormField label="Manager Email *">
@@ -160,7 +232,11 @@ export default function ProgramRegister() {
                         <>
                             <div style={{display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: 12}}>
                                 <StatusIndicator type="success">
-                                    Program created — Program ID:&nbsp;<strong>{programId}</strong>
+                                    {mode === 'existing' ? (
+                                        <>Program Details — Program ID:&nbsp;<strong>{programId}</strong></>
+                                    ) : (
+                                        <>Program Created — Program ID:&nbsp;<strong>{programId}</strong></>
+                                    )}
                                 </StatusIndicator>
                             </div>
                             <div style={{display: 'flex', gap: 8, marginTop: 8, alignItems: 'center'}}>
