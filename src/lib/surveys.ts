@@ -1,7 +1,7 @@
 // src/lib/surveys.ts
 import { getAuth } from 'firebase/auth'
 import {
-    getFirestore, doc, getDoc, collection, writeBatch, serverTimestamp
+    getFirestore, doc, getDoc, collection, writeBatch, serverTimestamp, Timestamp, addDoc
 } from 'firebase/firestore'
 
 const auth = getAuth()
@@ -63,4 +63,32 @@ export async function submitResidentWho5(answers: {q1:number;q2:number;q3:number
 
     await batch.commit()
     return { score, surveyId: surveyRef.id, programId, department }
+}
+
+export interface ProgramData {
+    access_care: number;
+    coord_care: number;
+    department: string;
+    end_date: Timestamp; 
+    information_education: number;
+    program_id: string;
+    respect_patient_prefs: number;
+    sample_size: number;
+    start_date: Timestamp;
+    emotional_support: number;
+}
+
+/**
+ * Writes a new program data record to the /cgcahps_programdata collection.
+ * * @param data The structured program data to be saved.
+ * @returns The ID of the newly created document.
+ */
+export async function addProgramData(data: ProgramData): Promise<string> {
+    const programDataCollection = collection(db, 'cgcahps_programdata');
+
+    const docRef = await addDoc(programDataCollection, {
+        ...data,
+    });
+
+    return docRef.id;
 }
