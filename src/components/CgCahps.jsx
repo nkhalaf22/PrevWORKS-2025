@@ -170,10 +170,19 @@ function ProgramUploadPanel({ programId, setMessage, setMessageType }) {
 
     return (
         <SpaceBetween size="s">
-            <Header variant="h3">Program Top Box Data</Header>
+            <SpaceBetween direction="horizontal" size="m" alignItems="center">
+                <Header variant="h3">Program Top Box Data</Header>
+                <Button 
+                    variant="link" 
+                    disabled={loading}
+                    href='/src/templates/programdatasample.csv'
+                    download 
+                >
+                    Download Template
+                </Button>
+            </SpaceBetween>
 
             <FormField 
-                label="Upload CSV"
                 description="CSV must contain: Start Date, End Date, Department, 5 Driver Scores, and Number of Surveys."
             >
                 <FileUpload
@@ -285,11 +294,20 @@ function NrcUploadPanel({ programId, setMessage, setMessageType }) {
 
     return (
         <SpaceBetween size="s">
-            <Header variant="h3">NRC Average Score Data</Header>
+            <SpaceBetween direction="horizontal" size="m" alignItems="center">
+                <Header variant="h3">NRC Average Score Data</Header>
+                <Button 
+                    variant="link" 
+                    disabled={loading}
+                    href='/src/templates/nrcavgsample.csv'
+                    download 
+                >
+                    Download Template
+                </Button>
+            </SpaceBetween>
             
             <FormField 
                 label="Upload CSV"
-                description="CSV must contain: Start Date, End Date, and 5 Driver Scores (Respect For Patient Preferences, Information and Education, Access to Care, Coordination of Care, Emotional Support)."
             >
                 <FileUpload
                     onChange={({ detail }) => setNrcFile(detail.value && detail.value[0])}
