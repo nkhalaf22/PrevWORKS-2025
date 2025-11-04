@@ -92,3 +92,35 @@ export async function addProgramData(data: ProgramData): Promise<string> {
 
     return docRef.id;
 }
+
+
+/**
+ * Interface representing the structure of a single NRC data record.
+ */
+export interface NrcData {
+    access_care: number;
+    coord_care: number;
+    emotional_support: number;
+    end_date: Timestamp;
+    information_education: number;
+    program_id: string;
+    respect_patient_prefs: number;
+    start_date: Timestamp;
+}
+
+/**
+ * Writes a new NRC data record to the /cgcahps_nrcdata collection.
+ * @param data The structured NRC data to be saved.
+ * @returns The ID of the newly created document.
+ */
+export async function addNrcData(data: NrcData): Promise<string> {
+    // Corrected collection path as requested: /cgcahps_nrcdata
+    const nrcDataCollection = collection(db, 'cgcahps_nrcdata');
+
+    // Use the spread operator to save all properties from the 'data' object
+    const docRef = await addDoc(nrcDataCollection, {
+        ...data,
+    });
+
+    return docRef.id;
+}

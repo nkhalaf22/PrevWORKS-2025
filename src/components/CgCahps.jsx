@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import Papa from 'papaparse'; // Added PapaParse for CSV parsing
+import Papa from 'papaparse'; 
 import { 
     Container, 
     Header, 
@@ -11,49 +11,40 @@ import {
     Box, 
     Input
 } from '@cloudscape-design/components';
-import { Timestamp } from 'firebase/firestore'; // Import Timestamp
-import { addProgramData } from '../lib/surveys'; // Import the function
+import { Timestamp } from 'firebase/firestore'; 
+import { addProgramData, addNrcData } from '../lib/surveys'; 
 
+
+const toTimestamp = (dateString) => {
+    if (!dateString) return null
+    const date = new Date(dateString)
+    // Check for 'Invalid Date' before converting
+    return date.toString() !== 'Invalid Date' ? Timestamp.fromDate(date) : null
+}
+
+const toNumber = (value) => Number(value) || 0
 
 /**
  * Converts a single parsed CSV row object into the ProgramData structure 
  * required by the addProgramData function.
  * @param {object} row A single parsed CSV row.
  * @param {string} pid The program_id provided by the user.
- * @returns {ProgramData | null} The structured data ready for Firestore, or null if mapping fails.
+ * @returns {object | null} The structured data ready for Firestore, or null if mapping fails.
  */
 const mapToProgramData = (row, pid) => {
-    // Helper to safely convert a date string to a Firestore Timestamp
-    const toTimestamp = (dateString) => {
-        if (!dateString) return null
-        const date = new Date(dateString)
-        // Check for 'Invalid Date' before converting
-        return date.toString() !== 'Invalid Date' ? Timestamp.fromDate(date) : null
-    }
-
-    // Helper to safely convert a string to a number
-    const toNumber = (value) => Number(value) || 0
-
     const requiredFields = [
-        'Start Date', 
-        'End Date', 
-        'Department', 
-        'Respect For Patient Preferences',
-        'Information and Education',
-        'Access to Care',
-        'Coordination of Care',
-        'Emotional Support',
-        'Sample Size' 
+        'Start Date', 'End Date', 'Department', 'Respect For Patient Preferences',
+        'Information and Education', 'Access to Care', 'Coordination of Care',
+        'Emotional Support', 'Sample Size' 
     ];
 
     const hasMissingField = requiredFields.some(field => !row[field]);
     
     if (hasMissingField || !pid) {
-         console.warn("Skipping row due to missing critical data:", { row, programId: pid });
+         console.warn("Skipping Program row due to missing critical data:", { row, programId: pid });
          return null;
     }
 
-    
     return {
         program_id: pid,
         start_date: toTimestamp(row['Start Date']),
@@ -69,38 +60,45 @@ const mapToProgramData = (row, pid) => {
 }
 
 
-export default function CgCahpsDrivers({ programId: initialProgramId }) {
-    // State to hold the selected file for Program data
-    const [programFile, setProgramFile] = useState(null)
-    // Use the prop as the initial value
-    const [programId, setProgramId] = useState(initialProgramId || '') 
+const mapToNrcData = (row, pid) => {
+    const requiredFields = [
+        'Start Date', 'End Date', 'Respect For Patient Preferences',
+        'Information and Education', 'Access to Care', 
+        'Coordination of Care', 'Emotional Support',
+    ];
+
+    const hasMissingField = requiredFields.some(field => !row[field]);
     
-    // State for simple submission feedback/messages
-    const [message, setMessage] = useState('')
-    const [messageType, setMessageType] = useState('info') 
-    const [loading, setLoading] = useState(false) 
+    if (hasMissingField || !pid) {
+         console.warn("Skipping NRC row due to missing critical data:", { row, programId: pid });
+         return null;
+    }
+    
+    return {
+        program_id: pid,
+        start_date: toTimestamp(row['Start Date']),
+        end_date: toTimestamp(row['End Date']),
+        respect_patient_prefs: toNumber(row['Respect For Patient Preferences']),
+        information_education: toNumber(row['Information and Education']),
+        access_care: toNumber(row['Access to Care']),
+        coord_care: toNumber(row['Coordination of Care']),
+        emotional_support: toNumber(row['Emotional Support']),
+    }
+}
 
-    // Update local state if the programId prop changes (i.e., when data loads)
-    useEffect(() => {
-        if (initialProgramId) {
-            setProgramId(initialProgramId);
-        }
-    }, [initialProgramId]);
+function ProgramUploadPanel({ programId, setMessage, setMessageType }) {
+    const [programFile, setProgramFile] = useState(null)
+    const [loading, setLoading] = useState(false)
 
-
-    /**
-     * Handles the 'Submit' action: parses the file and sends data to Firestore.
-     * @param {File | null} file The file object to be submitted.
-     */
-    const handleSubmit = (file) => {
+    const handleSubmitProgram = (file) => {
         if (!file) {
-            setMessage('Please select a file before submitting.')
+            setMessage('Please select a Program file before submitting.')
             setMessageType('info')
             return
         }
 
         if (!programId) {
-            setMessage('Program ID is missing. Please ensure your manager profile loaded correctly.')
+            setMessage('Program ID is missing for Program submission.')
             setMessageType('error')
             return
         }
@@ -109,21 +107,17 @@ export default function CgCahpsDrivers({ programId: initialProgramId }) {
         setMessage('Parsing Program data...')
         setMessageType('info')
         
-        // Client-side CSV Parsing using PapaParse -> 
-        // In the future this can be moved to a Cloud Function if the CSV is uploaded to Cloud Storage
         Papa.parse(file, {
-            header: true, // Converts the CSV to an array of objects
+            header: true, 
             skipEmptyLines: true,
-
-            // Clean headers and values by trimming and removing newlines
             transformHeader: (header) => header.trim().replace(/\n/g, ''),
             transform: (value) => value.trim().replace(/\n/g, ''),
             
             complete: async (results) => {
                 if (results.errors.length) {
                     const errorMsg = results.errors.map(e => e.message).join('; ')
-                    console.error('Parsing errors:', results.errors)
-                    setMessage(`Parsing failed: ${errorMsg}`)
+                    console.error('Program Parsing errors:', results.errors)
+                    setMessage(`Program Parsing failed: ${errorMsg}`)
                     setMessageType('error')
                     setLoading(false)
                     setTimeout(() => setMessage(''), 5000)
@@ -132,7 +126,7 @@ export default function CgCahpsDrivers({ programId: initialProgramId }) {
                     
                 const dataToSubmit = results.data
                     .map(row => mapToProgramData(row, programId))
-                    .filter(data => data !== null) // Filter out any invalid rows
+                    .filter(data => data !== null)
                     
                 let successCount = 0
                 let errorCount = 0
@@ -140,22 +134,22 @@ export default function CgCahpsDrivers({ programId: initialProgramId }) {
                 for (const data of dataToSubmit) {
                     try {
                         if (!data.start_date || !data.end_date || !data.program_id) {
-                            throw new Error('Row contains invalid dates or Program ID.')
+                            throw new Error('Program Row contains invalid dates or Program ID.')
                         }
                         await addProgramData(data)
                         successCount++
                     } catch (e) {
-                        console.error('Firestore submission error for row:', data, e)
+                        console.error('Firestore submission error for Program row:', data, e)
                         errorCount++
                     }
                 }
 
                 if (successCount > 0) {
-                    setMessage(`Success! Uploaded ${successCount} record(s). ${errorCount > 0 ? `(${errorCount} failed)` : ''}`)
+                    setMessage(`Success! Uploaded ${successCount} Program record(s). ${errorCount > 0 ? `(${errorCount} failed)` : ''}`)
                     setMessageType('success')
-                    setProgramFile(null) // Clear the file field on success
+                    setProgramFile(null) 
                 } else {
-                    setMessage(`Submission failed. No valid records found to submit.`)
+                    setMessage(`Program Submission failed. No valid records found to submit.`)
                     setMessageType('error')
                 }
                 
@@ -163,8 +157,8 @@ export default function CgCahpsDrivers({ programId: initialProgramId }) {
                 setTimeout(() => setMessage(''), 5000)
             },
             error: (error) => {
-                console.error('PapaParse general error:', error)
-                setMessage(`An unexpected error occurred during parsing: ${error.message}`)
+                console.error('PapaParse general error for Program:', error)
+                setMessage(`An unexpected error occurred during Program parsing: ${error.message}`)
                 setMessageType('error')
                 setLoading(false)
                 setTimeout(() => setMessage(''), 5000)
@@ -172,51 +166,194 @@ export default function CgCahpsDrivers({ programId: initialProgramId }) {
         });
     }
 
-    // Submit button is enabled only if a file is selected and programId is present
     const canSubmit = programFile && programId && !loading
+
+    return (
+        <SpaceBetween size="s">
+            <Header variant="h3">Program Top Box Data</Header>
+
+            <FormField 
+                label="Upload CSV"
+                description="CSV must contain: Start Date, End Date, Department, 5 Driver Scores, and Number of Surveys."
+            >
+                <FileUpload
+                    onChange={({ detail }) => {
+                        setProgramFile(detail.value && detail.value[0]);
+                    }}
+                    value={programFile ? [programFile] : []}
+                    showFileLastModified
+                    showFileSize
+                    accept=".csv"
+                    multiple={false}
+                    disabled={loading}
+                />
+            </FormField>
+            
+            <Button 
+                variant="primary" 
+                onClick={() => handleSubmitProgram(programFile)}
+                disabled={!canSubmit}
+                loading={loading}
+            >
+                Submit Program Data
+            </Button>
+        </SpaceBetween>
+    )
+}
+
+function NrcUploadPanel({ programId, setMessage, setMessageType }) {
+    const [nrcFile, setNrcFile] = useState(null)
+    const [loading, setLoading] = useState(false)
+
+    const handleSubmitNrc = (file) => {
+        if (!file) {
+            setMessage('Please select an NRC file before submitting.')
+            setMessageType('info')
+            return
+        }
+
+        if (!programId) {
+            setMessage('Program ID is missing for NRC submission.')
+            setMessageType('error')
+            return
+        }
+
+        setLoading(true)
+        setMessage('Parsing NRC data...')
+        setMessageType('info')
+        
+        Papa.parse(file, {
+            header: true, 
+            skipEmptyLines: true,
+            transformHeader: (header) => header.trim().replace(/\n/g, ''),
+            transform: (value) => value.trim().replace(/\n/g, ''),
+            
+            complete: async (results) => {
+                if (results.errors.length) {
+                    const errorMsg = results.errors.map(e => e.message).join('; ')
+                    console.error('NRC Parsing errors:', results.errors)
+                    setMessage(`NRC Parsing failed: ${errorMsg}`)
+                    setMessageType('error')
+                    setLoading(false)
+                    setTimeout(() => setMessage(''), 5000)
+                    return
+                }
+                    
+                const dataToSubmit = results.data
+                    .map(row => mapToNrcData(row, programId))
+                    .filter(data => data !== null)
+                    
+                let successCount = 0
+                let errorCount = 0
+                    
+                for (const data of dataToSubmit) {
+                    try {
+                        if (!data.start_date || !data.end_date || !data.program_id) {
+                            throw new Error('NRC Row contains invalid dates or Program ID.')
+                        }
+                        await addNrcData(data) 
+                        successCount++
+                    } catch (e) {
+                        console.error('Firestore submission error for NRC row:', data, e)
+                        errorCount++
+                    }
+                }
+
+                if (successCount > 0) {
+                    setMessage(`Success! Uploaded ${successCount} NRC record(s). ${errorCount > 0 ? `(${errorCount} failed)` : ''}`)
+                    setMessageType('success')
+                    setNrcFile(null) 
+                } else {
+                    setMessage(`NRC Submission failed. No valid records found to submit.`)
+                    setMessageType('error')
+                }
+                
+                setLoading(false)
+                setTimeout(() => setMessage(''), 5000)
+            },
+            error: (error) => {
+                console.error('PapaParse general error for NRC:', error)
+                setMessage(`An unexpected error occurred during NRC parsing: ${error.message}`)
+                setMessageType('error')
+                setLoading(false)
+                setTimeout(() => setMessage(''), 5000)
+            }
+        });
+    }
+
+    const canSubmitNrc = nrcFile && programId && !loading
+
+    return (
+        <SpaceBetween size="s">
+            <Header variant="h3">NRC Average Score Data</Header>
+            
+            <FormField 
+                label="Upload CSV"
+                description="CSV must contain: Start Date, End Date, and 5 Driver Scores (Respect For Patient Preferences, Information and Education, Access to Care, Coordination of Care, Emotional Support)."
+            >
+                <FileUpload
+                    onChange={({ detail }) => setNrcFile(detail.value && detail.value[0])}
+                    value={nrcFile ? [nrcFile] : []}
+                    showFileLastModified
+                    showFileSize
+                    accept=".csv"
+                    multiple={false}
+                    disabled={loading}
+                />
+            </FormField>
+            
+            <Button 
+                variant="primary" 
+                onClick={() => handleSubmitNrc(nrcFile)}
+                disabled={!canSubmitNrc}
+                loading={loading}
+            >
+                Submit NRC Data
+            </Button>
+        </SpaceBetween>
+    )
+}
+
+
+export default function CgCahpsDrivers({ programId: initialProgramId }) {
+    const [programId, setProgramId] = useState(initialProgramId || '') 
+        const [message, setMessage] = useState('')
+    const [messageType, setMessageType] = useState('info') 
+    
+    useEffect(() => {
+        if (initialProgramId) {
+            setProgramId(initialProgramId);
+        }
+    }, [initialProgramId]);
+
+    const programIdDisplay = programId 
+        ? <Box variant="span" color="text-status-success">{programId}</Box>
+        : <Box variant="span" color="text-status-error">Missing</Box>
+
 
     return (
         <Container header={<Header variant="h2">CG-CAHPS Drivers Upload</Header>}>
             <SpaceBetween size="l">
-
-                {/* Submission feedback message */}
                 {message && (
                     <Alert type={messageType} onDismiss={() => setMessage('')}>
                         {message}
                     </Alert>
                 )}
 
-                {/* -------------------- PROGRAM TOP BOX DATA -------------------- */}
-                <SpaceBetween size="s">
-                    <Header variant="h3">Program Top Box Data</Header>
+                <ProgramUploadPanel 
+                    programId={programId} 
+                    setMessage={setMessage}
+                    setMessageType={setMessageType}
+                />
+                
+                <hr />
 
-                    <FormField 
-                        label="Upload CSV"
-                        description="CSV must contain: Start Date, End Date, Department, 5 Driver Scores, and Number of Surveys."
-                    >
-                        <FileUpload
-                            onChange={({ detail }) => {
-                                setProgramFile(detail.value && detail.value[0]);
-                            }}
-                            value={programFile ? [programFile] : []}
-                            showFileLastModified
-                            showFileSize
-                            accept=".csv"
-                            multiple={false}
-                            disabled={loading}
-                        />
-                    </FormField>
-                    
-                    <Button 
-                        variant="primary" 
-                        onClick={() => handleSubmit(programFile)}
-                        disabled={!canSubmit}
-                        loading={loading}
-                    >
-                        Submit Program Data
-                    </Button>
+                <NrcUploadPanel 
+                    programId={programId} 
+                    setMessage={setMessage}
+                    setMessageType={setMessageType}
+                />
 
-                </SpaceBetween>
             </SpaceBetween>
         </Container>
     )
