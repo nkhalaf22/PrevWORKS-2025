@@ -97,18 +97,22 @@ const who5Residents = [
 ]
 
 // Map for active metric selection
+// Note: Mock capabilities mirror what we support in Firestore-backed mode
+// WHO-5 -> KPIs/Trend/Heatmap/Distribution; CG-CAHPS -> Driver metrics only
 const metricConfigs = {
   'CG-CAHPS': {
     label: 'CG-CAHPS',
-    trend: cgCahpsTrend,
+    trend: [], // not applicable for CG-CAHPS
     driverMetrics: cgCahpsDriverMetrics,
-    residents: cgCahpsResidents
+    residents: [],
+    capabilities: { metricType: 'CG-CAHPS', kpis: false, trend: false, heatmap: false, distribution: false, drivers: true }
   },
   'WHO-5': {
     label: 'WHO-5',
     trend: who5Trend,
-    driverMetrics: who5DriverMetrics,
-    residents: who5Residents
+    driverMetrics: [], // WHO-5 item-level drivers not collected in current data model
+    residents: who5Residents,
+    capabilities: { metricType: 'WHO-5', kpis: true, trend: true, heatmap: true, distribution: true, drivers: false }
   }
 }
 
@@ -410,67 +414,141 @@ const Heatmap = ({ months, values, departments: depts }) => {
 // Helper: transform Firestore data into dashboard format
 function transformFirestoreData(firestoreData, metricType) {
   const { surveys, weeklyData, departments: deptList, cgcahpsDrivers } = firestoreData
-  
-  // Build trend from weekly aggregates
-  const trend = weeklyData
-    .sort((a, b) => a.weekKey.localeCompare(b.weekKey))
-    .slice(-12) // last 12 weeks
-    .map(w => ({
-      x: w.weekKey,
-      y: Math.round(w.avg || 0)
-    }))
 
-  // Build residents list from surveys (simulate for heatmap)
-  const residents = surveys.map((s, idx) => ({
+  // Scale WHO-5 raw scores (0-25) to standardized 0-100 range
+  const scaleScore = (raw) => metricType === 'WHO-5' ? Math.round(raw * 4) : Math.round(raw)
+
+  // Build residents list from surveys (used for WHO-5 distribution)
+  const residents = (surveys || []).map((s, idx) => ({
     id: idx + 1,
     dept: s.department,
-    score: s.score,
+    score: scaleScore(s.score || 0),
     responded: true
   }))
 
-  // Use real CG-CAHPS drivers from Firestore if available, otherwise mock
-  let driverMetrics
-  if (metricType === 'CG-CAHPS' && cgcahpsDrivers && cgcahpsDrivers.length > 0) {
-    driverMetrics = cgcahpsDrivers
-  } else {
-    driverMetrics = metricType === 'WHO-5' ? who5DriverMetrics : cgCahpsDriverMetrics
+  // Capability flags per metric
+  const caps = metricType === 'WHO-5'
+    ? { metricType: 'WHO-5', kpis: true, trend: true, heatmap: true, distribution: true, drivers: false }
+    : { metricType: 'CG-CAHPS', kpis: false, trend: false, heatmap: false, distribution: false, drivers: true }
+
+  // For WHO-5, derive weekly aggregates from anon_surveys if dept_weekly is absent
+  let _weekly = Array.isArray(weeklyData) ? [...weeklyData] : []
+  if (metricType === 'WHO-5' && (!_weekly || _weekly.length === 0) && Array.isArray(surveys) && surveys.length > 0) {
+    const byWeekDept = new Map()
+    const byWeek = new Map()
+    const getKey = (wk, dept) => `${wk}__${dept}`
+
+    surveys.forEach(s => {
+      const wk = s.weekKey || (s.createdAt ? deriveIsoWeekKey(s.createdAt) : 'unknown')
+      const dept = s.department || 'Unknown'
+      const score = scaleScore(Number(s.score) || 0)
+
+      const ovr = byWeek.get(wk) || { sum: 0, count: 0 }
+      ovr.sum += score; ovr.count += 1; byWeek.set(wk, ovr)
+
+      const key = getKey(wk, dept)
+      const cur = byWeekDept.get(key) || { weekKey: wk, department: dept, sum: 0, count: 0 }
+      cur.sum += score; cur.count += 1; byWeekDept.set(key, cur)
+    })
+
+    _weekly = Array.from(byWeekDept.values()).map(v => ({
+      weekKey: v.weekKey,
+      department: v.department,
+      avg: v.count ? v.sum / v.count : 0,
+      count: v.count
+    }))
   }
 
-  // Build heatmap data from weekly aggregates grouped by department
-  const heatmapMonths = []
-  const heatmapDepts = deptList && deptList.length > 0 ? deptList : ['Emergency', 'Internal Med', 'Pediatrics', 'Surgery']
-  const heatmapValues = []
-  
-  // Get unique weeks (sorted)
-  const weeks = [...new Set(weeklyData.map(w => w.weekKey))].sort().slice(-9) // last 9 weeks
-  heatmapMonths.push(...weeks)
-  
-  // For each department, build array of scores by week
-  heatmapDepts.forEach(dept => {
-    const deptScores = weeks.map(week => {
-      const weekData = weeklyData.find(w => w.weekKey === week && w.department === dept)
-      return weekData ? Math.round(weekData.avg || 0) : 0
+  // Trend (WHO-5 only)
+  let trend = []
+  if (caps.trend) {
+    // Build overall weekly trend across departments
+    const byWeekOverall = new Map()
+    _weekly.forEach(w => {
+      const o = byWeekOverall.get(w.weekKey) || { sum: 0, count: 0 }
+      // If weekly data came from dept_weekly (pre-aggregated), scale avg; if derived above, already scaled
+      const avgScaled = (weeklyData && weeklyData.length > 0) ? scaleScore(Number(w.avg || 0)) : Number(w.avg || 0)
+      o.sum += avgScaled * (Number(w.count) || 1)
+      o.count += Number(w.count) || 1
+      byWeekOverall.set(w.weekKey, o)
     })
-    heatmapValues.push(deptScores)
-  })
+    const weeksSorted = Array.from(byWeekOverall.keys()).sort().slice(-12)
+    trend = weeksSorted.map(wk => {
+      const o = byWeekOverall.get(wk)
+      return { x: wk, y: Math.round(o.count ? o.sum / o.count : 0) }
+    })
+  }
 
-  // Calculate response rate from weekly data
-  // Sum up all counts and total possible responses
-  const totalResponses = weeklyData.reduce((sum, w) => sum + (w.count || 0), 0)
-  const totalPossible = surveys.length // This is a rough estimate
-  const responseRate = totalPossible > 0 ? Math.round((totalResponses / totalPossible) * 100) : 0
+  // Heatmap (WHO-5 only)
+  let heatmapMonths = [], heatmapDepts = [], heatmapValues = []
+  if (caps.heatmap) {
+    // Always extract unique departments from actual data (not from manager profile)
+    // This ensures we show all departments present in the surveys
+    let depts = Array.from(new Set((surveys || []).map(s => s.department).filter(d => d)))
+    
+    // If no surveys, try extracting from weekly data
+    if (depts.length === 0 && _weekly.length > 0) {
+      depts = Array.from(new Set(_weekly.map(w => w.department).filter(d => d)))
+    }
+    
+    // Fallback to deptList only if we still have no departments
+    if (depts.length === 0 && deptList && deptList.length > 0) {
+      depts = deptList
+    }
+    
+    // Sort departments alphabetically for consistent display
+    heatmapDepts = depts.sort()
+
+    const weeks = [...new Set((_weekly || []).map(w => w.weekKey))].sort().slice(-9)
+    heatmapMonths.push(...weeks)
+
+    heatmapDepts.forEach(dept => {
+      const row = weeks.map(week => {
+        const wd = (_weekly || []).find(w => w.weekKey === week && w.department === dept)
+        if (!wd) return 0
+        // Scale if source is dept_weekly (raw); if derived above, already scaled
+        const val = (weeklyData && weeklyData.length > 0) ? scaleScore(wd.avg || 0) : (wd.avg || 0)
+        return Math.round(val)
+      })
+      heatmapValues.push(row)
+    })
+  }
+
+  // Driver metrics (CG-CAHPS only)
+  let driverMetrics = []
+  if (caps.drivers) {
+    driverMetrics = Array.isArray(cgcahpsDrivers) && cgcahpsDrivers.length > 0
+      ? cgcahpsDrivers
+      : cgCahpsDriverMetrics
+  }
+
+  // Response rate not reliably computable without denominator; only show for WHO-5 if desired
+  const responseRate = caps.kpis ? null : null
 
   return {
     label: metricType,
-    trend: trend.length > 0 ? trend : [{ x: 'No data', y: 0 }],
+    capabilities: caps,
+    trend,
     driverMetrics,
-    residents: residents.length > 0 ? residents : [],
-    heatmapMonths: heatmapMonths.length > 0 ? heatmapMonths : ['No data'],
+    residents: caps.distribution ? residents : [],
+    heatmapMonths,
     heatmapDepts,
-    heatmapValues: heatmapValues.length > 0 ? heatmapValues : [[0]],
-    responseRate: surveys.length > 0 ? 100 : 0, // All surveys in anon_surveys are completed responses
-    totalSurveys: surveys.length
+    heatmapValues,
+    responseRate,
+    totalSurveys: surveys?.length || 0
   }
+}
+
+// Fallback: derive ISO year-week key like 2025-W43
+function deriveIsoWeekKey(date) {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+  // Thursday in current week decides the year.
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7))
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
+  const y = d.getUTCFullYear()
+  const ww = String(weekNo).padStart(2, '0')
+  return `${y}-W${ww}`
 }
 
 // Helper: compute slice window for a selected time range
@@ -669,28 +747,29 @@ export default function DashboardPage() {
     ? metricConfigs[metricOption.value]
     : transformFirestoreData(firestoreData, metricOption.value)
   
-  const wellnessTrend = active.trend
-  const driverMetrics = active.driverMetrics
-  const residents = active.residents
+  const wellnessTrend = active.trend || []
+  const driverMetrics = active.driverMetrics || []
+  const residents = active.residents || []
+  const caps = active.capabilities || metricConfigs[metricOption.value]?.capabilities || { kpis: true, trend: true, heatmap: true, distribution: true, drivers: false }
   
   // Get response rate from active source
-  const responseRate = useMockData || !firestoreData 
-    ? '87' 
-    : (active.responseRate || 0).toString()
+  const responseRate = (caps.kpis && active.responseRate != null)
+    ? String(active.responseRate)
+    : null
   
   // Get heatmap data from active source (Firestore or mock)
-  const heatmapMonths = useMockData || !firestoreData ? months : active.heatmapMonths
-  const heatmapDepts = useMockData || !firestoreData ? departments : active.heatmapDepts
-  const heatmapVals = useMockData || !firestoreData ? heatmapValues : active.heatmapValues
+  const heatmapMonths = (useMockData || !firestoreData) ? (metricOption.value === 'WHO-5' ? months : []) : (active.heatmapMonths || [])
+  const heatmapDepts = (useMockData || !firestoreData) ? (metricOption.value === 'WHO-5' ? departments : []) : (active.heatmapDepts || [])
+  const heatmapVals = (useMockData || !firestoreData) ? (metricOption.value === 'WHO-5' ? heatmapValues : []) : (active.heatmapValues || [])
 
   // Apply time range to trend and heatmap columns
-  const trendWindow = computeSliceWindow(range.value, wellnessTrend.length)
+  const trendWindow = computeSliceWindow(range.value, wellnessTrend.length || 0)
   const filteredTrend = useMemo(
     () => wellnessTrend.slice(trendWindow.start, trendWindow.end),
     [wellnessTrend, trendWindow.start, trendWindow.end]
   )
 
-  const monthsWindow = computeSliceWindow(range.value, heatmapMonths.length)
+  const monthsWindow = computeSliceWindow(range.value, heatmapMonths.length || 0)
   const filteredMonths = useMemo(
     () => heatmapMonths.slice(monthsWindow.start, monthsWindow.end),
     [heatmapMonths, monthsWindow.start, monthsWindow.end]
@@ -860,82 +939,107 @@ export default function DashboardPage() {
               </Container>
             </Grid>
 
-            {/* Top Metrics + Driver Metrics */}
-            <Grid
-              gridDefinition={[
-                { colspan: { default: 12, s: 3 } },
-                { colspan: { default: 12, s: 3 } },
-                { colspan: { default: 12, s: 2 } },
-                { colspan: { default: 12, s: 4 } }
-              ]}
-            >
-              <MetricCard
-                title="Wellness Score"
-                value={
-                  <span>
-                    {latestWellness}
-                    <Box as="span" color="text-status-success" fontSize="body-s" margin={{ left: 'xs' }}>
-                      ↑ {wellnessDelta}
-                    </Box>
-                  </span>
-                }
-                status={wellnessClass}
-              />
-              <MetricCard title="Response Rate" value={`${responseRate} %`} />
-              <MetricCard title="Cohort Size" value={residents.length} />
+            {/* KPIs (WHO-5 only) */}
+            {caps.kpis && (
+              <Grid
+                gridDefinition={[
+                  { colspan: { default: 12, s: 4 } },
+                  { colspan: { default: 12, s: 4 } },
+                  { colspan: { default: 12, s: 4 } }
+                ]}
+              >
+                <MetricCard
+                  title="Wellness Score"
+                  value={
+                    <span>
+                      {latestWellness}
+                      <Box as="span" color="text-status-success" fontSize="body-s" margin={{ left: 'xs' }}>
+                        ↑ {wellnessDelta}
+                      </Box>
+                    </span>
+                  }
+                  status={wellnessClass}
+                />
+                <MetricCard title="Cohort Size" value={residents.length} />
+                {responseRate != null ? (
+                  <MetricCard title="Response Rate" value={`${responseRate} %`} />
+                ) : (
+                  <Container />
+                )}
+              </Grid>
+            )}
+
+            {/* Driver Metrics (CG-CAHPS only) */}
+            {caps.drivers && (
               <Container header={<Header variant="h3">Driver Metrics</Header>}>
                 <DriverMetricsChart driverMetrics={driverMetrics} />
                 <Box margin={{ top: 'xs' }} fontSize="body-xxs" color="text-body-secondary">
                   Hover for benchmark & delta. Highlight = focus driver.
                 </Box>
               </Container>
-            </Grid>
+            )}
 
-            {/* Trend (filtered by time range) */}
-            <Grid gridDefinition={[{ colspan: { default: 12 } }]}>
-              <Container header={<Header variant="h3">{metricOption.label} Trend</Header>}>
-                <LineChart
-                  xScaleType="categorical"
-                  series={[{ title: metricOption.label, type: 'line', data: filteredTrend }]}
-                  xDomain={filteredTrend.map(p => p.x)}
-                  yDomain={[0, 100]}
-                  i18nStrings={{
-                    filterLabel: 'Filter',
-                    filterPlaceholder: 'Filter',
-                    detailPopoverDismissAriaLabel: 'Dismiss',
-                    legendAriaLabel: 'Legend',
-                    chartAriaRoleDescription: 'line chart'
-                  }}
-                  ariaLabel="Metric score trend"
-                  height={260}
+            {/* Trend (WHO-5 only, filtered by time range) */}
+            {caps.trend && (
+              <Grid gridDefinition={[{ colspan: { default: 12 } }]}>
+                <Container header={<Header variant="h3">{metricOption.label} Trend</Header>}>
+                  <LineChart
+                    xScaleType="categorical"
+                    series={[{ title: metricOption.label, type: 'line', data: filteredTrend }]}
+                    xDomain={filteredTrend.map(p => p.x)}
+                    yDomain={[0, 100]}
+                    i18nStrings={{
+                      filterLabel: 'Filter',
+                      filterPlaceholder: 'Filter',
+                      detailPopoverDismissAriaLabel: 'Dismiss',
+                      legendAriaLabel: 'Legend',
+                      chartAriaRoleDescription: 'line chart'
+                    }}
+                    ariaLabel="Metric score trend"
+                    height={260}
+                  />
+                </Container>
+              </Grid>
+            )}
+
+            {/* Heatmap and/or compact driver bars */}
+            {(caps.heatmap || caps.drivers) && (
+              <Grid
+                gridDefinition={
+                  caps.heatmap && caps.drivers
+                    ? [{ colspan: { default: 12, s: 6 } }, { colspan: { default: 12, s: 6 } }]
+                    : [{ colspan: { default: 12 } }]
+                }
+              >
+                {caps.heatmap && (
+                  <Container header={<Header variant="h3">Wellness Score by Department</Header>}>
+                    <Heatmap months={filteredMonths} values={filteredHeatmapValues} departments={heatmapDepts} />
+                  </Container>
+                )}
+                {caps.drivers && (
+                  <Container header={<Header variant="h3">Driver Metrics (Alt List)</Header>}>
+                    <DriverMetricBars driverMetrics={driverMetrics} />
+                  </Container>
+                )}
+              </Grid>
+            )}
+
+            {/* Distribution at bottom (WHO-5 only) */}
+            {caps.distribution && (
+              <Container>
+                <DistributionSection
+                  avgWellness={avgWellness}
+                  segmentAgg={segmentAgg}
+                  aboveDeptBreakdown={aboveDeptBreakdown}
+                  avgDeptBreakdown={avgDeptBreakdown}
+                  belowAvgDeptBreakdown={belowAvgDeptBreakdown}
+                  nearAboveCount={nearAboveCount}
+                  nearAvgCount={nearAvgCount}
+                  nearBelowCount={nearBelowCount}
+                  wellnessDelta={wellnessDelta}
                 />
               </Container>
-            </Grid>
-
-            {/* Heatmap with filtered columns */}
-            <Grid gridDefinition={[{ colspan: { default: 12, s: 6 } }, { colspan: { default: 12, s: 6 } }]}>
-              <Container header={<Header variant="h3">Wellness Score by Department</Header>}>
-                <Heatmap months={filteredMonths} values={filteredHeatmapValues} departments={heatmapDepts} />
-              </Container>
-              <Container header={<Header variant="h3">Driver Metrics (Alt List)</Header>}>
-                <DriverMetricBars driverMetrics={driverMetrics} />
-              </Container>
-            </Grid>
-
-            {/* Distribution at bottom */}
-            <Container>
-              <DistributionSection
-                avgWellness={avgWellness}
-                segmentAgg={segmentAgg}
-                aboveDeptBreakdown={aboveDeptBreakdown}
-                avgDeptBreakdown={avgDeptBreakdown}
-                belowAvgDeptBreakdown={belowAvgDeptBreakdown}
-                nearAboveCount={nearAboveCount}
-                nearAvgCount={nearAvgCount}
-                nearBelowCount={nearBelowCount}
-                wellnessDelta={wellnessDelta}
-              />
-            </Container>
+            )}
                     </SpaceBetween>
                   )
                 },
