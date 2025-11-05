@@ -610,6 +610,474 @@ function parseCgCahpsCsv(text) {
   }))
 }
 
+// ---------------- Export Functions ------------------------------------------
+
+/**
+ * Export dashboard data as CSV
+ */
+function exportToCsv(data) {
+  const {
+    metricType,
+    programId,
+    department,
+    timeRange,
+    kpis,
+    trend,
+    distribution,
+    heatmap,
+    driverMetrics
+  } = data
+
+  const lines = []
+  
+  // Header section
+  lines.push('PrevWORKS Dashboard Export')
+  lines.push(`Metric,${metricType}`)
+  lines.push(`Program ID,${programId || 'N/A'}`)
+  lines.push(`Department,${department}`)
+  lines.push(`Time Range,${timeRange}`)
+  lines.push(`Export Date,${new Date().toLocaleString()}`)
+  lines.push('')
+  
+  // KPIs section
+  if (kpis) {
+    lines.push('KEY PERFORMANCE INDICATORS')
+    lines.push('Metric,Value')
+    lines.push(`Wellness Score,${kpis.latestWellness}`)
+    lines.push(`Wellness Delta,${kpis.wellnessDelta >= 0 ? '+' : ''}${kpis.wellnessDelta}`)
+    lines.push(`Cohort Size,${kpis.cohortSize}`)
+    if (kpis.responseRate != null) {
+      lines.push(`Response Rate,${kpis.responseRate}%`)
+    }
+    lines.push('')
+  }
+  
+  // Trend section
+  if (trend && trend.length > 0) {
+    lines.push('TREND DATA')
+    lines.push('Period,Score')
+    trend.forEach(point => {
+      lines.push(`${point.x},${point.y}`)
+    })
+    lines.push('')
+  }
+  
+  // Driver Metrics section
+  if (driverMetrics && driverMetrics.length > 0) {
+    lines.push('DRIVER METRICS')
+    lines.push('Driver,Score (%),Benchmark (%),Delta')
+    driverMetrics.forEach(driver => {
+      const score = Math.round(driver.value * 100)
+      const benchmark = Math.round(driver.benchmark * 100)
+      const delta = score - benchmark
+      lines.push(`${driver.name},${score},${benchmark},${delta >= 0 ? '+' : ''}${delta}`)
+    })
+    lines.push('')
+  }
+  
+  // Distribution section
+  if (distribution) {
+    lines.push('DISTRIBUTION BY SEGMENT')
+    lines.push('Segment,Cohort Size,Respondents,Response Rate (%),Avg Score')
+    distribution.segmentAgg.forEach(seg => {
+      lines.push(`${seg.segment},${seg.cohortSize},${seg.respondents},${seg.responseRate},${seg.avgScore}`)
+    })
+    lines.push('')
+    
+    // Department breakdowns
+    lines.push('BELOW AVERAGE BY DEPARTMENT')
+    lines.push('Department,Cohort Size,Respondents,Response Rate (%),% of Below Avg,Avg Score')
+    distribution.belowAvgDeptBreakdown.forEach(dept => {
+      lines.push(`${dept.dept},${dept.cohortSize},${dept.respondents},${dept.responseRate},${dept.pct},${dept.avg}`)
+    })
+    lines.push('')
+    
+    lines.push('AVERAGE BY DEPARTMENT')
+    lines.push('Department,Cohort Size,Respondents,Response Rate (%),Avg Score')
+    distribution.avgDeptBreakdown.forEach(dept => {
+      lines.push(`${dept.dept},${dept.cohortSize},${dept.respondents},${dept.responseRate},${dept.avg}`)
+    })
+    lines.push('')
+    
+    lines.push('ABOVE AVERAGE BY DEPARTMENT')
+    lines.push('Department,Cohort Size,Respondents,Response Rate (%),Avg Score')
+    distribution.aboveDeptBreakdown.forEach(dept => {
+      lines.push(`${dept.dept},${dept.cohortSize},${dept.respondents},${dept.responseRate},${dept.avg}`)
+    })
+    lines.push('')
+  }
+  
+  // Heatmap section
+  if (heatmap && heatmap.depts && heatmap.months && heatmap.values) {
+    lines.push('HEATMAP DATA')
+    lines.push(['Department', ...heatmap.months].join(','))
+    heatmap.depts.forEach((dept, deptIdx) => {
+      const row = [dept]
+      heatmap.months.forEach((_, monthIdx) => {
+        const value = heatmap.values[deptIdx]?.[monthIdx]
+        row.push(value != null ? value : '')
+      })
+      lines.push(row.join(','))
+    })
+  }
+  
+  // Create blob and download
+  const csv = lines.join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `prevworks-dashboard-${metricType.toLowerCase()}-${new Date().toISOString().split('T')[0]}.csv`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+/**
+ * Export dashboard data as PDF
+ */
+function exportToPdf(data) {
+  const {
+    metricType,
+    programId,
+    department,
+    timeRange,
+    kpis,
+    trend,
+    distribution,
+    heatmap,
+    driverMetrics
+  } = data
+
+  // Create a styled HTML document
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>PrevWORKS Dashboard Report</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 40px;
+      color: #333;
+      line-height: 1.6;
+    }
+    .header {
+      border-bottom: 3px solid #0073bb;
+      padding-bottom: 20px;
+      margin-bottom: 30px;
+    }
+    h1 {
+      color: #0073bb;
+      margin: 0;
+      font-size: 28px;
+    }
+    .meta {
+      color: #666;
+      font-size: 14px;
+      margin-top: 10px;
+    }
+    h2 {
+      color: #0073bb;
+      border-bottom: 2px solid #eee;
+      padding-bottom: 8px;
+      margin-top: 30px;
+      font-size: 20px;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      margin: 20px 0;
+    }
+    .kpi-card {
+      border: 1px solid #ddd;
+      padding: 15px;
+      border-radius: 8px;
+      background: #f9f9f9;
+    }
+    .kpi-label {
+      font-size: 12px;
+      color: #666;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+    .kpi-value {
+      font-size: 24px;
+      font-weight: bold;
+      color: #0073bb;
+    }
+    .positive {
+      color: #1d8102;
+    }
+    .warning {
+      color: #ff9900;
+    }
+    .error {
+      color: #d13212;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      font-size: 14px;
+    }
+    th {
+      background: #0073bb;
+      color: white;
+      text-align: left;
+      padding: 10px;
+      font-weight: normal;
+    }
+    td {
+      padding: 8px 10px;
+      border-bottom: 1px solid #eee;
+    }
+    tr:nth-child(even) td {
+      background: #f9f9f9;
+    }
+    .footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #ddd;
+      font-size: 12px;
+      color: #666;
+      text-align: center;
+    }
+    @media print {
+      body { margin: 20px; }
+      .kpi-grid { break-inside: avoid; }
+      table { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>PrevWORKS Dashboard Report</h1>
+    <div class="meta">
+      <strong>Metric:</strong> ${metricType} &nbsp;|&nbsp;
+      <strong>Program:</strong> ${programId || 'N/A'} &nbsp;|&nbsp;
+      <strong>Department:</strong> ${department} &nbsp;|&nbsp;
+      <strong>Time Range:</strong> ${timeRange}<br>
+      <strong>Generated:</strong> ${new Date().toLocaleString()}
+    </div>
+  </div>
+
+  ${kpis ? `
+  <h2>Key Performance Indicators</h2>
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">Wellness Score</div>
+      <div class="kpi-value ${kpis.latestWellness >= 70 ? 'positive' : kpis.latestWellness >= 50 ? 'warning' : 'error'}">${kpis.latestWellness}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Wellness Delta</div>
+      <div class="kpi-value ${kpis.wellnessDelta >= 0 ? 'positive' : 'error'}">${kpis.wellnessDelta >= 0 ? '+' : ''}${kpis.wellnessDelta}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Cohort Size</div>
+      <div class="kpi-value">${kpis.cohortSize}</div>
+    </div>
+    ${kpis.responseRate != null ? `
+    <div class="kpi-card">
+      <div class="kpi-label">Response Rate</div>
+      <div class="kpi-value">${kpis.responseRate}%</div>
+    </div>
+    ` : ''}
+  </div>
+  ` : ''}
+
+  ${trend && trend.length > 0 ? `
+  <h2>Trend Data</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Period</th>
+        <th>Score</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${trend.map(point => `
+        <tr>
+          <td>${point.x}</td>
+          <td>${point.y}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+  ` : ''}
+
+  ${driverMetrics && driverMetrics.length > 0 ? `
+  <h2>Driver Metrics</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Driver</th>
+        <th>Score (%)</th>
+        <th>Benchmark (%)</th>
+        <th>Delta</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${driverMetrics.map(driver => {
+        const score = Math.round(driver.value * 100)
+        const benchmark = Math.round(driver.benchmark * 100)
+        const delta = score - benchmark
+        return `
+        <tr>
+          <td>${driver.name}</td>
+          <td>${score}</td>
+          <td>${benchmark}</td>
+          <td class="${delta >= 0 ? 'positive' : 'error'}">${delta >= 0 ? '+' : ''}${delta}</td>
+        </tr>
+        `
+      }).join('')}
+    </tbody>
+  </table>
+  ` : ''}
+
+  ${distribution ? `
+  <h2>Distribution by Segment</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Segment</th>
+        <th>Cohort Size</th>
+        <th>Respondents</th>
+        <th>Response Rate (%)</th>
+        <th>Avg Score</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${distribution.segmentAgg.map(seg => `
+        <tr>
+          <td>${seg.segment}</td>
+          <td>${seg.cohortSize}</td>
+          <td>${seg.respondents}</td>
+          <td>${seg.responseRate}</td>
+          <td>${seg.avgScore}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+
+  <h2>Below Average by Department</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Department</th>
+        <th>Cohort Size</th>
+        <th>Respondents</th>
+        <th>Response Rate (%)</th>
+        <th>% of Below Avg</th>
+        <th>Avg Score</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${distribution.belowAvgDeptBreakdown.map(dept => `
+        <tr>
+          <td>${dept.dept}</td>
+          <td>${dept.cohortSize}</td>
+          <td>${dept.respondents}</td>
+          <td>${dept.responseRate}</td>
+          <td>${dept.pct}</td>
+          <td>${dept.avg}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+
+  <h2>Average by Department</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Department</th>
+        <th>Cohort Size</th>
+        <th>Respondents</th>
+        <th>Response Rate (%)</th>
+        <th>Avg Score</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${distribution.avgDeptBreakdown.map(dept => `
+        <tr>
+          <td>${dept.dept}</td>
+          <td>${dept.cohortSize}</td>
+          <td>${dept.respondents}</td>
+          <td>${dept.responseRate}</td>
+          <td>${dept.avg}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+
+  <h2>Above Average by Department</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Department</th>
+        <th>Cohort Size</th>
+        <th>Respondents</th>
+        <th>Response Rate (%)</th>
+        <th>Avg Score</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${distribution.aboveDeptBreakdown.map(dept => `
+        <tr>
+          <td>${dept.dept}</td>
+          <td>${dept.cohortSize}</td>
+          <td>${dept.respondents}</td>
+          <td>${dept.responseRate}</td>
+          <td>${dept.avg}</td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+  ` : ''}
+
+  ${heatmap && heatmap.depts && heatmap.months && heatmap.values ? `
+  <h2>Heatmap Data</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Department</th>
+        ${heatmap.months.map(month => `<th>${month}</th>`).join('')}
+      </tr>
+    </thead>
+    <tbody>
+      ${heatmap.depts.map((dept, deptIdx) => `
+        <tr>
+          <td>${dept}</td>
+          ${heatmap.months.map((_, monthIdx) => {
+            const value = heatmap.values[deptIdx]?.[monthIdx]
+            return `<td>${value != null ? value : '-'}</td>`
+          }).join('')}
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>
+  ` : ''}
+
+  <div class="footer">
+    <p>PrevWORKS Dashboard Report | Generated ${new Date().toLocaleString()}</p>
+  </div>
+</body>
+</html>
+  `
+
+  // Open in new window and trigger print dialog
+  const printWindow = window.open('', '_blank')
+  printWindow.document.write(html)
+  printWindow.document.close()
+  
+  // Wait for content to load then print
+  printWindow.onload = function() {
+    printWindow.focus()
+    printWindow.print()
+  }
+}
+
 // ---------------- Page ------------------------------------------------------
 export default function DashboardPage() {
   const [metricOption, setMetricOption] = useState({ label: 'CG-CAHPS', value: 'CG-CAHPS' })
@@ -767,6 +1235,65 @@ export default function DashboardPage() {
     } finally {
       setUploading(false)
     }
+  }
+
+  // Export handlers
+  const handleExportCsv = () => {
+    const exportData = {
+      metricType: metricOption.label,
+      programId: programId,
+      department: departmentFilter.label,
+      timeRange: range.label,
+      kpis: caps.kpis ? {
+        latestWellness,
+        wellnessDelta,
+        cohortSize: residents.length,
+        responseRate
+      } : null,
+      trend: filteredTrend,
+      driverMetrics: caps.drivers ? driverMetrics : null,
+      distribution: caps.distribution ? {
+        segmentAgg,
+        belowAvgDeptBreakdown,
+        avgDeptBreakdown,
+        aboveDeptBreakdown
+      } : null,
+      heatmap: caps.heatmap ? {
+        depts: heatmapDepts,
+        months: heatmapMonths,
+        values: heatmapValues
+      } : null
+    }
+    exportToCsv(exportData)
+  }
+
+  const handleExportPdf = () => {
+    const exportData = {
+      metricType: metricOption.label,
+      programId: programId,
+      department: departmentFilter.label,
+      timeRange: range.label,
+      kpis: caps.kpis ? {
+        latestWellness,
+        wellnessDelta,
+        cohortSize: residents.length,
+        responseRate
+      } : null,
+      trend: filteredTrend,
+      driverMetrics: caps.drivers ? driverMetrics : null,
+      distribution: caps.distribution ? {
+        segmentAgg,
+        belowAvgDeptBreakdown,
+        avgDeptBreakdown,
+        aboveDeptBreakdown
+      } : null,
+      heatmap: caps.heatmap ? {
+        depts: heatmapDepts,
+        months: heatmapMonths,
+        values: heatmapValues
+      } : null
+    }
+    exportToPdf(exportData)
   }
 
   // Use Firestore data if available, otherwise fall back to mock
@@ -988,12 +1515,9 @@ export default function DashboardPage() {
               </Container>
               <Container>
                 <SpaceBetween size="xs">
-                  <Button>Export CSV</Button>
-                  <Button>Export PDF</Button>
+                  <Button onClick={handleExportCsv}>Export CSV</Button>
+                  <Button onClick={handleExportPdf}>Export PDF</Button>
                 </SpaceBetween>
-              </Container>
-              <Container>
-                <Box fontSize="body-s" color="text-body-secondary">Cohort Selector</Box>
               </Container>
             </Grid>
 
@@ -1019,10 +1543,8 @@ export default function DashboardPage() {
                   status={wellnessClass}
                 />
                 <MetricCard title="Cohort Size" value={residents.length} />
-                {responseRate != null ? (
+                {responseRate != null && (
                   <MetricCard title="Response Rate" value={`${responseRate} %`} />
-                ) : (
-                  <Container />
                 )}
               </Grid>
             )}
