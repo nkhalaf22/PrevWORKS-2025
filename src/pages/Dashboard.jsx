@@ -166,12 +166,20 @@ function buildDistribution(residents) {
     const total = list.length || 1
     const m = {}
     list.forEach(r => {
-      if (!m[r.dept]) m[r.dept] = { dept: r.dept, cohortSize: 0, sum: 0 }
+      if (!m[r.dept]) m[r.dept] = { dept: r.dept, cohortSize: 0, respondents: 0, sum: 0 }
       m[r.dept].cohortSize++
+      if (r.responded) m[r.dept].respondents++
       m[r.dept].sum += r.score
     })
     return Object.values(m)
-      .map(d => ({ dept: d.dept, cohortSize: d.cohortSize, pct: Math.round((d.cohortSize / total) * 100), avg: Math.round(d.sum / d.cohortSize) }))
+      .map(d => ({ 
+        dept: d.dept, 
+        cohortSize: d.cohortSize, 
+        respondents: d.respondents,
+        responseRate: d.cohortSize ? Math.round((d.respondents / d.cohortSize) * 100) : 0,
+        pct: Math.round((d.cohortSize / total) * 100), 
+        avg: Math.round(d.sum / d.cohortSize) 
+      }))
       .sort((a, b) => a.avg - b.avg)
   }
 
@@ -586,7 +594,7 @@ function parseCgCahpsCsv(text) {
 // ---------------- Page ------------------------------------------------------
 export default function DashboardPage() {
   const [metricOption, setMetricOption] = useState({ label: 'CG-CAHPS', value: 'CG-CAHPS' })
-  const [cohort, setCohort] = useState({ label: 'All Cohorts', value: 'all' })
+  const [departmentFilter, setDepartmentFilter] = useState({ label: 'All Departments', value: 'all' })
   const [range, setRange] = useState({ label: 'Last 12 Months', value: '12m' })
   
   // Auth & Firestore state
@@ -747,10 +755,26 @@ export default function DashboardPage() {
     ? metricConfigs[metricOption.value]
     : transformFirestoreData(firestoreData, metricOption.value)
   
+  // Apply department filter
+  const filterByDepartment = (data) => {
+    if (departmentFilter.value === 'all') return data
+    return data.filter(item => item.dept === departmentFilter.value || item.department === departmentFilter.value)
+  }
+  
   const wellnessTrend = active.trend || []
   const driverMetrics = active.driverMetrics || []
-  const residents = active.residents || []
+  const allResidents = active.residents || []
+  const residents = filterByDepartment(allResidents)
   const caps = active.capabilities || metricConfigs[metricOption.value]?.capabilities || { kpis: true, trend: true, heatmap: true, distribution: true, drivers: false }
+  
+  // Get unique departments for filter dropdown
+  const availableDepartments = useMemo(() => {
+    const depts = Array.from(new Set(allResidents.map(r => r.dept).filter(d => d)))
+    return [
+      { label: 'All Departments', value: 'all' },
+      ...depts.sort().map(d => ({ label: d, value: d }))
+    ]
+  }, [allResidents])
   
   // Get response rate from active source
   const responseRate = (caps.kpis && active.responseRate != null)
@@ -759,8 +783,23 @@ export default function DashboardPage() {
   
   // Get heatmap data from active source (Firestore or mock)
   const heatmapMonths = (useMockData || !firestoreData) ? (metricOption.value === 'WHO-5' ? months : []) : (active.heatmapMonths || [])
-  const heatmapDepts = (useMockData || !firestoreData) ? (metricOption.value === 'WHO-5' ? departments : []) : (active.heatmapDepts || [])
-  const heatmapVals = (useMockData || !firestoreData) ? (metricOption.value === 'WHO-5' ? heatmapValues : []) : (active.heatmapValues || [])
+    const allHeatmapDepts = (useMockData || !firestoreData) ? (metricOption.value === 'WHO-5' ? departments : []) : (active.heatmapDepts || [])
+    const allHeatmapVals = (useMockData || !firestoreData) ? (metricOption.value === 'WHO-5' ? heatmapValues : []) : (active.heatmapValues || [])
+  
+    // Filter heatmap by department
+    const { heatmapDepts, heatmapVals } = useMemo(() => {
+      if (departmentFilter.value === 'all') {
+        return { heatmapDepts: allHeatmapDepts, heatmapVals: allHeatmapVals }
+      }
+      const deptIndex = allHeatmapDepts.indexOf(departmentFilter.value)
+      if (deptIndex === -1) {
+        return { heatmapDepts: [], heatmapVals: [] }
+      }
+      return {
+        heatmapDepts: [departmentFilter.value],
+        heatmapVals: [allHeatmapVals[deptIndex]]
+      }
+    }, [departmentFilter.value, allHeatmapDepts, allHeatmapVals])
 
   // Apply time range to trend and heatmap columns
   const trendWindow = computeSliceWindow(range.value, wellnessTrend.length || 0)
@@ -895,9 +934,9 @@ export default function DashboardPage() {
                 <SpaceBetween size="xs">
                   <Box variant="awsui-key-label">Filter By</Box>
                   <Select
-                    selectedOption={cohort}
-                    onChange={e => setCohort(e.detail.selectedOption)}
-                    options={[{ label: 'All Cohorts', value: 'all' }]}
+                      selectedOption={departmentFilter}
+                      onChange={e => setDepartmentFilter(e.detail.selectedOption)}
+                      options={availableDepartments}
                   />
                 </SpaceBetween>
               </Container>
@@ -1229,6 +1268,8 @@ const DistributionSection = ({
           columnDefinitions={[
             { id: 'dept', header: 'Department', cell: i => i.dept },
             { id: 'cohortSize', header: 'Cohort Size', cell: i => i.cohortSize },
+            { id: 'respondents', header: 'Respondents', cell: i => i.respondents },
+            { id: 'responseRate', header: 'Response Rate', cell: i => i.responseRate + '%' },
             { id: 'pct', header: '% of Below Avg', cell: i => i.pct + '%' },
             { id: 'avg', header: 'Avg Score', cell: i => i.avg }
           ]}
@@ -1245,6 +1286,7 @@ const DistributionSection = ({
             columnDefinitions={[
               { id: 'dept', header: 'Department', cell: i => i.dept },
               { id: 'cohortSize', header: 'Cohort Size', cell: i => i.cohortSize },
+              { id: 'responseRate', header: 'Response Rate', cell: i => i.responseRate + '%' },
               { id: 'avg', header: 'Avg Score', cell: i => i.avg }
             ]}
             variant="embedded"
@@ -1257,6 +1299,7 @@ const DistributionSection = ({
             columnDefinitions={[
               { id: 'dept', header: 'Department', cell: i => i.dept },
               { id: 'cohortSize', header: 'Cohort Size', cell: i => i.cohortSize },
+              { id: 'responseRate', header: 'Response Rate', cell: i => i.responseRate + '%' },
               { id: 'avg', header: 'Avg Score', cell: i => i.avg }
             ]}
             variant="embedded"
