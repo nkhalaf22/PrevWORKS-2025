@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "test": "vitest --environment=jsdom",
     "generate-mock": "node scripts/generate-mock-data-simple.js",
-    "generate-mock:dry": "node scripts/generate-mock-data-simple.js --dry-run"
+    "generate-mock:dry": "node scripts/generate-mock-data-simple.js --dry-run",
+    "delete-surveys": "node scripts/delete-anon-surveys.js",
+    "delete-surveys:dry": "node scripts/delete-anon-surveys.js --dry-run"
   },
   "dependencies": {
     "@cloudscape-design/components": "^3.0.1096",
