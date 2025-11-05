@@ -86,10 +86,33 @@ function weeksAgo(n) {
 }
 
 function generateScore(weekIndex) {
-  // Simple distribution: baseline 10-20, improve 0.3 per week
-  const baseline = 10 + Math.random() * 10
-  const improvement = weekIndex * 0.3
-  return Math.max(0, Math.min(25, Math.round(baseline + improvement)))
+  // Balanced distribution across all wellness levels
+  // Use weighted random selection for realistic variety
+  const rand = Math.random()
+  
+  let min, max
+  if (rand < 0.20) {
+    // 20% Critical (<28 scaled = 0-6 raw)
+    min = 0
+    max = 6
+  } else if (rand < 0.50) {
+    // 30% At-Risk (28-49 scaled = 7-12 raw)
+    min = 7
+    max = 12
+  } else if (rand < 0.80) {
+    // 30% Watch Zone (50-69 scaled = 13-17 raw)
+    min = 13
+    max = 17
+  } else {
+    // 20% Thriving (>=70 scaled = 18-25 raw)
+    min = 18
+    max = 25
+  }
+  
+  // Random score within the selected range
+  const score = min + Math.random() * (max - min)
+  
+  return Math.max(0, Math.min(25, Math.round(score)))
 }
 
 function randomTimestampInWeek(weekDate) {
