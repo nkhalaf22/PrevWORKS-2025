@@ -135,8 +135,22 @@ function classifyScore(score) {
 }
 
 function buildDistribution(residents) {
-  const avg = residents.reduce((a, r) => a + r.score, 0) / (residents.length || 1)
-  const segmentOf = score => (score > avg ? 'Above Average' : score < avg ? 'Below Average' : 'Average')
+  // Calculate score range and divide into equal thirds
+  const scores = residents.map(r => r.score)
+  const minScore = Math.min(...scores, 0)
+  const maxScore = Math.max(...scores, 100)
+  const range = maxScore - minScore
+  const thirdSize = range / 3
+  
+  // Define boundaries for equal thirds
+  const lowerThreshold = minScore + thirdSize
+  const upperThreshold = minScore + (2 * thirdSize)
+  
+  const segmentOf = score => {
+    if (score < lowerThreshold) return 'Below Average'
+    if (score < upperThreshold) return 'Average'
+    return 'Above Average'
+  }
 
   const segmentMap = {}
   const bySegment = { above: [], average: [], below: [] }
@@ -152,6 +166,9 @@ function buildDistribution(residents) {
     else if (seg === 'Average') bySegment.average.push(r)
     else bySegment.below.push(r)
   })
+  
+  // Calculate average for display
+  const avg = residents.reduce((a, r) => a + r.score, 0) / (residents.length || 1)
 
   const segmentAgg = Object.values(segmentMap).map(o => ({
     segment: o.segment,
@@ -187,10 +204,12 @@ function buildDistribution(residents) {
   const avgDeptBreakdown = deptBreakdown(bySegment.average)
   const belowAvgDeptBreakdown = deptBreakdown(bySegment.below)
 
-  // Near-threshold counts (within ±5 of the overall mean boundary)
-  const nearAboveCount = bySegment.above.filter(r => r.score <= avg + 5).length
-  const nearAvgCount = bySegment.average.filter(r => Math.abs(r.score - avg) <= 5).length
-  const nearBelowCount = bySegment.below.filter(r => r.score >= avg - 5).length
+  // Near-threshold counts (within ±5 of segment boundaries)
+  const nearAboveCount = bySegment.above.filter(r => r.score <= upperThreshold + 5).length
+  const nearAvgCount = bySegment.average.filter(r => 
+    Math.abs(r.score - lowerThreshold) <= 5 || Math.abs(r.score - upperThreshold) <= 5
+  ).length
+  const nearBelowCount = bySegment.below.filter(r => r.score >= lowerThreshold - 5).length
 
   return {
     avgWellness: avg,
@@ -1278,11 +1297,11 @@ const DistributionSection = ({
         />
       </Container>
 
-      {/* Optional: quick glance for other segments (top/bottom 3 by avg) */}
+      {/* Department breakdowns for all segments */}
       <Grid gridDefinition={[{ colspan: { default: 12, s: 6 } }, { colspan: { default: 12, s: 6 } }]}>
-        <Container header={<Header variant="h3">Average by Department (lowest 5)</Header>}>
+        <Container header={<Header variant="h3">Average by Department</Header>}>
           <Table
-            items={avgDeptBreakdown.slice(0, 5)}
+            items={avgDeptBreakdown}
             columnDefinitions={[
               { id: 'dept', header: 'Department', cell: i => i.dept },
               { id: 'cohortSize', header: 'Cohort Size', cell: i => i.cohortSize },
@@ -1293,9 +1312,9 @@ const DistributionSection = ({
             stripedRows
           />
         </Container>
-        <Container header={<Header variant="h3">Above Average by Department (lowest 5)</Header>}>
+        <Container header={<Header variant="h3">Above Average by Department</Header>}>
           <Table
-            items={aboveDeptBreakdown.slice(0, 5)}
+            items={aboveDeptBreakdown}
             columnDefinitions={[
               { id: 'dept', header: 'Department', cell: i => i.dept },
               { id: 'cohortSize', header: 'Cohort Size', cell: i => i.cohortSize },
