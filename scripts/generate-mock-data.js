@@ -42,11 +42,11 @@ const CONFIG = {
   // Score distribution (0-25 raw WHO-5 scale)
   // Adjust these to simulate different wellness states
   scoreDistribution: {
-    // Most residents in Watch Zone to Thriving (50-100 on 0-100 scale = 12.5-25 raw)
-    thriving: { min: 18, max: 25, weight: 0.25 },      // >=70 scaled
-    watchZone: { min: 13, max: 17, weight: 0.40 },     // 50-69 scaled
-    atRisk: { min: 7, max: 12, weight: 0.25 },         // 28-49 scaled
-    critical: { min: 0, max: 6, weight: 0.10 }         // <28 scaled
+    // More balanced distribution across all ranges
+    thriving: { min: 18, max: 25, weight: 0.20 },      // >=70 scaled
+    watchZone: { min: 13, max: 17, weight: 0.30 },     // 50-69 scaled
+    atRisk: { min: 7, max: 12, weight: 0.30 },         // 28-49 scaled
+    critical: { min: 0, max: 6, weight: 0.20 }         // <28 scaled
   },
 
   // Add some variance by department (multiplier on base score)
@@ -58,7 +58,8 @@ const CONFIG = {
   },
 
   // Trend: improve scores over time (add this much per week)
-  weeklyImprovement: 0.3,
+  // Set to 0 for no trend, or use small value like 0.2 for gradual improvement
+  weeklyImprovement: 0,
 
   // Dry run mode (logs data without writing to Firestore)
   dryRun: false
