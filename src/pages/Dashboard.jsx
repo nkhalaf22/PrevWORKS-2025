@@ -22,6 +22,7 @@ import {
 import Brand from '../components/Brand'
 import { getAuth, onAuthStateChanged } from 'firebase/auth'
 import { getFirestore, doc, getDoc, collection, query, where, orderBy, limit, getDocs, setDoc, serverTimestamp } from 'firebase/firestore'
+import CgCahpsDrivers from '../components/CgCahps'
 
 const auth = getAuth()
 const db = getFirestore()
@@ -1628,6 +1629,8 @@ export default function DashboardPage() {
                   label: 'Manage Data',
                   content: (
                     <SpaceBetween size="l">
+                      <CgCahpsDrivers programId={programId}></CgCahpsDrivers>
+                      
                       <Container header={<Header variant="h2">Upload CG-CAHPS Driver Metrics</Header>}>
                         <SpaceBetween size="m">
                           <Alert type="info">
