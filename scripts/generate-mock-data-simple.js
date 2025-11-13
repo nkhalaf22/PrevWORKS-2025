@@ -1,8 +1,8 @@
 /**
- * Mock Data Generator - Simplified Version
+ * Mock Data Generator - Unified Version
  * 
+ * Generates both WHO-5 and CG-CAHPS data with matching cohorts.
  * This version reads Firebase config from your .env file (same as the app).
- * No need to hardcode credentials!
  * 
  * Usage:
  *   node scripts/generate-mock-data-simple.js [options]
@@ -11,15 +11,25 @@
  *   --program=PW-6II1D3          Program ID (default: PW-6II1D3)
  *   --weeks=12                   Number of weeks (default: 12)
  *   --surveys=5                  Avg surveys per dept/week (default: 5)
+ *   --dist=uniform|balanced      Apply to both WHO-5 and CG-CAHPS (default: uniform)
+ *   --who5-dist=uniform|balanced Override WHO-5 distribution (default: uniform)
+ *   --cgcahps-dist=uniform|realistic Override CG-CAHPS distribution (default: uniform)
+ *   --who5-min=0                 WHO-5 min raw score inclusive (default: 0)
+ *   --who5-max=25                WHO-5 max raw score inclusive (default: 25)
+ *   --cgcahps-min=0.3            CG-CAHPS min (0-1) (default: 0.3)
+ *   --cgcahps-max=0.9            CG-CAHPS max (0-1) (default: 0.9)
+ *   --who5-only                  Generate only WHO-5 data
+ *   --cgcahps-only               Generate only CG-CAHPS data
  *   --dry-run                    Preview without writing
  * 
  * Examples:
  *   node scripts/generate-mock-data-simple.js --dry-run
  *   node scripts/generate-mock-data-simple.js --program=MY-PROG --weeks=24
+ *   node scripts/generate-mock-data-simple.js --who5-only
  */
 
 import { initializeApp } from 'firebase/app'
-import { getFirestore, collection, doc, writeBatch, Timestamp } from 'firebase/firestore'
+import { getFirestore, collection, doc, writeBatch, Timestamp, addDoc } from 'firebase/firestore'
 import { config } from 'dotenv'
 
 // Load environment variables
@@ -41,6 +51,15 @@ const CONFIG = {
   departments: ['Emergency', 'Internal Med', 'Pediatrics', 'Surgery'],
   weeksToGenerate: parseInt(args.weeks) || 12,
   surveysPerDeptPerWeek: parseInt(args.surveys) || 5,
+  // Distribution controls (defaults to uniform for demo friendliness)
+  who5Distribution: (args['who5-dist'] || args['dist'] || 'uniform').toLowerCase(),
+  cgcahpsDistribution: (args['cgcahps-dist'] || args['dist'] || 'uniform').toLowerCase(),
+  who5Min: Number.isFinite(parseInt(args['who5-min'])) ? parseInt(args['who5-min']) : 0,
+  who5Max: Number.isFinite(parseInt(args['who5-max'])) ? parseInt(args['who5-max']) : 25,
+  cgMin: Number.isFinite(parseFloat(args['cgcahps-min'])) ? parseFloat(args['cgcahps-min']) : 0.3,
+  cgMax: Number.isFinite(parseFloat(args['cgcahps-max'])) ? parseFloat(args['cgcahps-max']) : 0.9,
+  generateWho5: !args['cgcahps-only'],
+  generateCgCahps: !args['who5-only'],
   dryRun: args['dry-run'] === true
 }
 
@@ -85,34 +104,42 @@ function weeksAgo(n) {
   return date
 }
 
-function generateScore(weekIndex) {
-  // Balanced distribution across all wellness levels
-  // Use weighted random selection for realistic variety
+function generateWho5Score() {
+  if (CONFIG.who5Distribution === 'uniform') {
+    const min = Math.max(0, CONFIG.who5Min)
+    const max = Math.min(25, CONFIG.who5Max)
+    const val = Math.floor(min + Math.random() * (max - min + 1))
+    return Math.max(0, Math.min(25, val))
+  }
+
+  // Balanced distribution across wellness levels (previous default)
   const rand = Math.random()
-  
   let min, max
   if (rand < 0.20) {
-    // 20% Critical (<28 scaled = 0-6 raw)
-    min = 0
-    max = 6
+    min = 0; max = 6
   } else if (rand < 0.50) {
-    // 30% At-Risk (28-49 scaled = 7-12 raw)
-    min = 7
-    max = 12
+    min = 7; max = 12
   } else if (rand < 0.80) {
-    // 30% Watch Zone (50-69 scaled = 13-17 raw)
-    min = 13
-    max = 17
+    min = 13; max = 17
   } else {
-    // 20% Thriving (>=70 scaled = 18-25 raw)
-    min = 18
-    max = 25
+    min = 18; max = 25
   }
-  
-  // Random score within the selected range
   const score = min + Math.random() * (max - min)
-  
   return Math.max(0, Math.min(25, Math.round(score)))
+}
+
+function generateCgCahpsScore() {
+  // CG-CAHPS scores are 0.0 to 1.0
+  if (CONFIG.cgcahpsDistribution === 'uniform') {
+    const min = Math.max(0, CONFIG.cgMin)
+    const max = Math.min(1, CONFIG.cgMax)
+    const val = min + Math.random() * (max - min)
+    return Math.max(0, Math.min(1, val))
+  }
+  // Realistic clustering around ~0.75
+  const base = 0.70 + Math.random() * 0.15 // 0.70 to 0.85
+  const variance = (Math.random() - 0.5) * 0.1 // ±0.05
+  return Math.max(0, Math.min(1, base + variance))
 }
 
 function randomTimestampInWeek(weekDate) {
@@ -123,14 +150,14 @@ function randomTimestampInWeek(weekDate) {
 }
 
 // ============================================================================
-// GENERATE DATA
+// GENERATE WHO-5 DATA
 // ============================================================================
 
-function generateMockData() {
+function generateWho5Data() {
   const { programId, departments, weeksToGenerate, surveysPerDeptPerWeek } = CONFIG
   const surveys = []
   
-  console.log(`\n📊 Generating mock data for program: ${programId}`)
+  console.log(`\n📊 Generating WHO-5 data for program: ${programId}`)
   console.log(`   Departments: ${departments.join(', ')}`)
   console.log(`   Weeks: ${weeksToGenerate}`)
   console.log(`   Surveys per dept per week: ~${surveysPerDeptPerWeek}\n`)
@@ -147,7 +174,7 @@ function generateMockData() {
       for (let i = 0; i < count; i++) {
         surveys.push({
           department,
-          score: generateScore(weekIndex),
+          score: generateWho5Score(),
           weekKey,
           createdAt: randomTimestampInWeek(weekDate)
         })
@@ -158,7 +185,7 @@ function generateMockData() {
     console.log(`   ${weekKey}: ${weekCount} surveys`)
   }
   
-  console.log(`\n✅ Generated ${surveys.length} total surveys`)
+  console.log(`\n✅ Generated ${surveys.length} total WHO-5 surveys`)
   
   // Score distribution
   const bySegment = { thriving: 0, watchZone: 0, atRisk: 0, critical: 0 }
@@ -170,7 +197,7 @@ function generateMockData() {
     else bySegment.critical++
   })
   
-  console.log('\n📈 Score Distribution (0-100 scale):')
+  console.log('\n📈 WHO-5 Score Distribution (0-100 scale):')
   console.log(`   Thriving (≥70):     ${bySegment.thriving} (${Math.round(bySegment.thriving/surveys.length*100)}%)`)
   console.log(`   Watch Zone (50-69): ${bySegment.watchZone} (${Math.round(bySegment.watchZone/surveys.length*100)}%)`)
   console.log(`   At-Risk (28-49):    ${bySegment.atRisk} (${Math.round(bySegment.atRisk/surveys.length*100)}%)`)
@@ -180,48 +207,135 @@ function generateMockData() {
 }
 
 // ============================================================================
+// GENERATE CG-CAHPS DATA
+// ============================================================================
+
+function generateCgCahpsData() {
+  const { programId, departments, weeksToGenerate } = CONFIG
+  const programDataRecords = []
+  
+  console.log(`\n🏥 Generating CG-CAHPS data for program: ${programId}`)
+  console.log(`   Departments: ${departments.join(', ')}`)
+  console.log(`   Survey periods: Based on ${weeksToGenerate} weeks\n`)
+  
+  // Generate one program data record per department
+  // Using the time range from the WHO-5 data for consistency
+  const endDate = new Date()
+  const startDate = weeksAgo(weeksToGenerate)
+  
+  departments.forEach(department => {
+    // Calculate sample size based on surveys per dept per week
+    const sampleSize = CONFIG.surveysPerDeptPerWeek * weeksToGenerate
+    
+    const programData = {
+      program_id: programId,
+      department,
+      access_care: generateCgCahpsScore(),
+      coord_care: generateCgCahpsScore(),
+      emotional_support: generateCgCahpsScore(),
+      information_education: generateCgCahpsScore(),
+      respect_patient_prefs: generateCgCahpsScore(),
+      sample_size: sampleSize,
+      start_date: Timestamp.fromDate(startDate),
+      end_date: Timestamp.fromDate(endDate)
+    }
+    
+    programDataRecords.push(programData)
+    
+    console.log(`   ${department}:`)
+    console.log(`      Sample size: ${sampleSize}`)
+    console.log(`      Access to Care: ${Math.round(programData.access_care * 100)}%`)
+    console.log(`      Care Coordination: ${Math.round(programData.coord_care * 100)}%`)
+    console.log(`      Emotional Support: ${Math.round(programData.emotional_support * 100)}%`)
+    console.log(`      Information & Education: ${Math.round(programData.information_education * 100)}%`)
+    console.log(`      Respect for Preferences: ${Math.round(programData.respect_patient_prefs * 100)}%`)
+  })
+  
+  console.log(`\n✅ Generated ${programDataRecords.length} CG-CAHPS program data records`)
+  
+  return programDataRecords
+}
+
+// ============================================================================
 // UPLOAD TO FIRESTORE
 // ============================================================================
 
-async function uploadToFirestore(surveys) {
-  const { programId, dryRun } = CONFIG
+async function uploadToFirestore(who5Surveys, cgCahpsData) {
+  const { programId, dryRun, generateWho5, generateCgCahps } = CONFIG
   
   if (dryRun) {
     console.log('\n🔍 DRY RUN - No data written')
-    console.log('\nSample documents:')
-    surveys.slice(0, 3).forEach((s, i) => {
-      console.log(`\n${i + 1}. ${s.weekKey} - ${s.department}`)
-      console.log(`   Score: ${s.score} (raw) = ${s.score * 4} (scaled)`)
-      console.log(`   Created: ${s.createdAt.toDate().toISOString()}`)
-    })
+    
+    if (generateWho5 && who5Surveys.length > 0) {
+      console.log('\nSample WHO-5 documents:')
+      who5Surveys.slice(0, 3).forEach((s, i) => {
+        console.log(`\n${i + 1}. ${s.weekKey} - ${s.department}`)
+        console.log(`   Score: ${s.score} (raw) = ${s.score * 4} (scaled)`)
+        console.log(`   Created: ${s.createdAt.toDate().toISOString()}`)
+      })
+    }
+    
+    if (generateCgCahps && cgCahpsData.length > 0) {
+      console.log('\nSample CG-CAHPS documents:')
+      cgCahpsData.slice(0, 2).forEach((d, i) => {
+        console.log(`\n${i + 1}. ${d.department}`)
+        console.log(`   Sample size: ${d.sample_size}`)
+        console.log(`   Period: ${d.start_date.toDate().toISOString().split('T')[0]} to ${d.end_date.toDate().toISOString().split('T')[0]}`)
+      })
+    }
     return
   }
   
   console.log('\n🔄 Uploading to Firestore...')
   
-  const batchSize = 500
-  const batches = []
+  let totalWho5 = 0
+  let totalCgCahps = 0
   
-  for (let i = 0; i < surveys.length; i += batchSize) {
-    const batch = writeBatch(db)
-    const chunk = surveys.slice(i, i + batchSize)
+  // Upload WHO-5 surveys
+  if (generateWho5 && who5Surveys.length > 0) {
+    console.log('\n📊 Uploading WHO-5 surveys...')
+    const batchSize = 500
+    const batches = []
     
-    chunk.forEach(survey => {
-      const docRef = doc(collection(db, `programs/${programId}/anon_surveys`))
-      batch.set(docRef, survey)
-    })
+    for (let i = 0; i < who5Surveys.length; i += batchSize) {
+      const batch = writeBatch(db)
+      const chunk = who5Surveys.slice(i, i + batchSize)
+      
+      chunk.forEach(survey => {
+        const docRef = doc(collection(db, `programs/${programId}/anon_surveys`))
+        batch.set(docRef, survey)
+      })
+      
+      batches.push(batch)
+    }
     
-    batches.push(batch)
+    for (let i = 0; i < batches.length; i++) {
+      await batches[i].commit()
+      console.log(`   ✓ Batch ${i + 1}/${batches.length} committed`)
+    }
+    
+    totalWho5 = who5Surveys.length
+    console.log(`✅ WHO-5 Upload complete!`)
+    console.log(`   Collection: programs/${programId}/anon_surveys`)
+    console.log(`   Documents: ${totalWho5}`)
   }
   
-  for (let i = 0; i < batches.length; i++) {
-    await batches[i].commit()
-    console.log(`   ✓ Batch ${i + 1}/${batches.length} committed`)
+  // Upload CG-CAHPS program data
+  if (generateCgCahps && cgCahpsData.length > 0) {
+    console.log('\n🏥 Uploading CG-CAHPS program data...')
+    
+    for (const programData of cgCahpsData) {
+      const docRef = await addDoc(collection(db, 'cgcahps_programdata'), programData)
+      console.log(`   ✓ ${programData.department} - ID: ${docRef.id}`)
+      totalCgCahps++
+    }
+    
+    console.log(`✅ CG-CAHPS Upload complete!`)
+    console.log(`   Collection: cgcahps_programdata`)
+    console.log(`   Documents: ${totalCgCahps}`)
   }
   
-  console.log('\n✅ Upload complete!')
-  console.log(`   Collection: programs/${programId}/anon_surveys`)
-  console.log(`   Documents: ${surveys.length}`)
+  return { totalWho5, totalCgCahps }
 }
 
 // ============================================================================
@@ -230,15 +344,29 @@ async function uploadToFirestore(surveys) {
 
 async function main() {
   console.log('═══════════════════════════════════════════════════')
-  console.log('  PrevWORKS Mock Data Generator')
+  console.log('  PrevWORKS Unified Mock Data Generator')
   console.log('═══════════════════════════════════════════════════')
   
+  const { generateWho5, generateCgCahps } = CONFIG
+  
+  console.log(`\n📋 Configuration:`)
+  console.log(`   WHO-5: ${generateWho5 ? '✓ Enabled' : '✗ Disabled'}`)
+  console.log(`   CG-CAHPS: ${generateCgCahps ? '✓ Enabled' : '✗ Disabled'}`)
+  
   try {
-    const surveys = generateMockData()
-    await uploadToFirestore(surveys)
+    // Generate data
+    const who5Surveys = generateWho5 ? generateWho5Data() : []
+    const cgCahpsData = generateCgCahps ? generateCgCahpsData() : []
+    
+    // Upload to Firestore
+    const results = await uploadToFirestore(who5Surveys, cgCahpsData)
     
     console.log('\n═══════════════════════════════════════════════════')
     console.log('  Done!')
+    if (results) {
+      console.log(`  WHO-5: ${results.totalWho5} surveys`)
+      console.log(`  CG-CAHPS: ${results.totalCgCahps} records`)
+    }
     console.log('═══════════════════════════════════════════════════\n')
     
   } catch (error) {

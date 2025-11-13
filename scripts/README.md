@@ -1,178 +1,216 @@
-# Mock Data Generator
+# Mock Data Scripts
 
-Generate realistic WHO-5 survey data for testing the PrevWORKS dashboard and analytics.
+Unified scripts for generating and managing both WHO-5 and CG-CAHPS mock data with matching cohorts.
+
+## Overview
+
+The mock data generator creates **logically cohesive** data across both WHO-5 surveys and CG-CAHPS program metrics:
+- **Shared cohorts**: Both datasets use the same departments (Emergency, Internal Med, Pediatrics, Surgery)
+- **Matching quantities**: CG-CAHPS sample sizes match the number of WHO-5 surveys per department
+- **Synchronized timeframes**: Both datasets cover the same time period
 
 ## Quick Start
 
-1. **Configure your Firebase credentials**
-
-   Open `scripts/generate-mock-data.js` and update the `firebaseConfig` object with your Firebase project settings (copy from `src/lib/firebase.js`):
-
-   ```javascript
-   firebaseConfig: {
-     apiKey: "your-api-key",
-     authDomain: "your-project.firebaseapp.com",
-     projectId: "your-project-id",
-     storageBucket: "your-project.appspot.com",
-     messagingSenderId: "123456789",
-     appId: "your-app-id"
-   }
-   ```
-
-2. **Customize generation settings** (optional)
-
-   Edit the `CONFIG` object in the script to adjust:
-   - `programId`: Your program ID (default: `'PW-6II1D3'`)
-   - `departments`: Array of department names
-   - `weeksToGenerate`: How many weeks of historical data (default: 12)
-   - `surveysPerDeptPerWeek`: Range of surveys per department per week
-   - `scoreDistribution`: Wellness score distribution weights
-   - `departmentVariance`: Department-specific score adjustments
-   - `weeklyImprovement`: Score improvement trend over time
-
-3. **Run the generator**
-
-   ```powershell
-   node scripts/generate-mock-data.js
-   ```
-
-## What It Generates
-
-The script populates `programs/{programId}/anon_surveys` with documents containing:
-
-```javascript
-{
-  department: "Emergency",
-  score: 15,              // Raw WHO-5 score (0-25)
-  weekKey: "2025-W43",    // ISO week
-  createdAt: Timestamp    // Random time within that week
-}
+**Generate both WHO-5 and CG-CAHPS data:**
+```bash
+npm run generate-mock
 ```
 
-## Configuration Options
-
-### Score Distribution
-
-Adjust the `scoreDistribution` weights to simulate different wellness scenarios:
-
-```javascript
-scoreDistribution: {
-  thriving: { min: 18, max: 25, weight: 0.25 },   // ≥70 on 0-100 scale
-  watchZone: { min: 13, max: 17, weight: 0.40 },  // 50-69 scaled
-  atRisk: { min: 7, max: 12, weight: 0.25 },      // 28-49 scaled
-  critical: { min: 0, max: 6, weight: 0.10 }      // <28 scaled
-}
+**Preview without writing:**
+```bash
+npm run generate-mock:dry
 ```
 
-**Example scenarios:**
-
-- **Crisis scenario** (high burnout):
-  ```javascript
-  thriving: { min: 18, max: 25, weight: 0.10 },
-  watchZone: { min: 13, max: 17, weight: 0.20 },
-  atRisk: { min: 7, max: 12, weight: 0.40 },
-  critical: { min: 0, max: 6, weight: 0.30 }
-  ```
-
-- **Healthy program** (strong wellness):
-  ```javascript
-  thriving: { min: 18, max: 25, weight: 0.50 },
-  watchZone: { min: 13, max: 17, weight: 0.35 },
-  atRisk: { min: 7, max: 12, weight: 0.10 },
-  critical: { min: 0, max: 6, weight: 0.05 }
-  ```
-
-### Department Variance
-
-Simulate different stress levels by department:
-
-```javascript
-departmentVariance: {
-  'Emergency': 0.85,      // More stressful (lower scores)
-  'Internal Med': 0.95,
-  'Pediatrics': 1.05,     // Better wellness (higher scores)
-  'Surgery': 0.90
-}
+**Delete all mock data:**
+```bash
+npm run delete-surveys:dry  # Preview first
+npm run delete-surveys      # Actually delete
 ```
 
-### Weekly Improvement Trend
+## Scripts
 
-Add a positive or negative trend over time:
+### `generate-mock-data-simple.js`
+Generates WHO-5 and/or CG-CAHPS mock data with matching cohorts.
 
-```javascript
-weeklyImprovement: 0.3   // Scores improve by ~0.3 points per week
-// or
-weeklyImprovement: -0.2  // Declining wellness over time
+**Default behavior**: Generates both WHO-5 and CG-CAHPS data
+
+**Usage:**
+```bash
+# Generate both WHO-5 and CG-CAHPS (default)
+npm run generate-mock
+
+# Preview without writing
+npm run generate-mock:dry
+
+# Generate only WHO-5 data
+npm run generate-mock:who5
+
+# Generate only CG-CAHPS data
+npm run generate-mock:cgcahps
+
+# Custom program and settings
+node scripts/generate-mock-data-simple.js --program=MY-PROG --weeks=24 --surveys=10
 ```
 
-## Dry Run Mode
+**Options:**
+- `--program=PW-6II1D3` - Program ID (default: PW-6II1D3)
+- `--weeks=12` - Number of weeks (default: 12)
+- `--surveys=5` - Average surveys per department per week (default: 5)
+- `--dist=uniform|balanced` - Apply one distribution to both datasets (default: `uniform`)
+- `--who5-dist=uniform|balanced` - Override WHO-5 distribution (default: `uniform`)
+- `--cgcahps-dist=uniform|realistic` - Override CG-CAHPS distribution (default: `uniform`)
+- `--who5-min=0` / `--who5-max=25` - WHO-5 raw range inclusive (default: 0-25)
+- `--cgcahps-min=0.3` / `--cgcahps-max=0.9` - CG-CAHPS range (0-1) (default: 0.3-0.9)
+- `--who5-only` - Generate only WHO-5 data
+- `--cgcahps-only` - Generate only CG-CAHPS data
+- `--dry-run` - Preview without writing to Firestore
 
-Test your configuration without writing to Firestore:
+**Output:**
+- **WHO-5**: `programs/{programId}/anon_surveys` subcollection
+- **CG-CAHPS**: `cgcahps_programdata` collection with `program_id` field
 
-```javascript
-dryRun: true
+**Score Distribution:**
+- WHO-5: Balanced across wellness levels (20% Critical, 30% At-Risk, 30% Watch Zone, 20% Thriving)
+- CG-CAHPS: Realistic scores clustered around 70-80% with variance
+
+---
+
+### `delete-anon-surveys.js`
+Deletes WHO-5 and/or CG-CAHPS mock data.
+
+**Default behavior**: Deletes both WHO-5 and CG-CAHPS data
+
+**Usage:**
+```bash
+# Delete both WHO-5 and CG-CAHPS (with preview)
+npm run delete-surveys:dry
+
+# Delete both WHO-5 and CG-CAHPS (live)
+npm run delete-surveys
+
+# Delete only WHO-5 data
+npm run delete-surveys:who5
+
+# Delete only CG-CAHPS data
+npm run delete-surveys:cgcahps
+
+# Custom program
+node scripts/delete-anon-surveys.js --program=MY-PROG --dry-run
 ```
 
-This will:
-- Generate all data
-- Print statistics
-- Show sample documents
-- **Not write anything to Firestore**
+**Options:**
+- `--program=PW-6II1D3` - Program ID (default: PW-6II1D3)
+- `--who5-only` - Delete only WHO-5 data
+- `--cgcahps-only` - Delete only CG-CAHPS data
+- `--dry-run` - Preview without deleting
 
-## Output
+**Safety:**
+- Always shows preview of what will be deleted
+- Supports dry-run mode to verify before deletion
+- Batched deletion for large datasets
 
-The script provides detailed statistics:
+---
 
-```
-📊 Generating mock data for program: PW-6II1D3
-   Departments: Emergency, Internal Med, Pediatrics, Surgery
-   Weeks: 12
-   Surveys per dept per week: 3-8
+## Quick Reference
 
-   Week 2025-W31: 24 surveys
-   Week 2025-W32: 26 surveys
-   ...
+```bash
+# Generate both datasets with preview
+npm run generate-mock:dry
 
-✅ Generated 312 total surveys
+# Generate both datasets (live)
+npm run generate-mock
 
-📈 Score Distribution (0-100 scale):
-   Thriving (≥70):     78 (25%)
-   Watch Zone (50-69): 125 (40%)
-   At-Risk (28-49):    78 (25%)
-   Critical (<28):     31 (10%)
+# Delete both datasets with preview
+npm run delete-surveys:dry
 
-🔄 Uploading to Firestore...
-   Writing 1 batch(es)...
-   ✓ Batch 1/1 committed
+# Delete both datasets (live)
+npm run delete-surveys
 
-✅ Upload complete!
-   Collection: programs/PW-6II1D3/anon_surveys
-   Documents: 312
+# Generate only WHO-5
+npm run generate-mock:who5
+
+# Delete only CG-CAHPS
+npm run delete-surveys:cgcahps
 ```
 
-## Tips
+## Data Cohesion
 
-1. **Start with dry run** to verify your configuration generates the expected distribution
-2. **Use realistic numbers**: 3-8 surveys per department per week matches typical biweekly check-ins
-3. **Generate multiple program IDs** by running the script multiple times with different `programId` values
-4. **Clear existing data** via Firestore console if you want to regenerate from scratch
+The generator ensures logical consistency between WHO-5 and CG-CAHPS:
+
+1. **Same departments**: Both use Emergency, Internal Med, Pediatrics, Surgery
+2. **Sample size matching**: CG-CAHPS `sample_size` = `weeks * surveysPerWeek` for each department
+3. **Time period alignment**: CG-CAHPS `start_date` and `end_date` match the WHO-5 survey period
+4. **Program ID**: Both datasets share the same `program_id`
+
+
+### Example Output:
+
+**WHO-5 Surveys** (12 weeks × 4 departments × ~5 surveys = ~240 total)
+```
+programs/PW-6II1D3/anon_surveys/
+  - doc1: { department: "Emergency", score: 18, weekKey: "2025-W45", ... }
+  - doc2: { department: "Internal Med", score: 12, weekKey: "2025-W45", ... }
+  - doc3: { department: "Pediatrics", score: 8, weekKey: "2025-W45", ... }
+  ...
+```
+
+**CG-CAHPS Program Data** (1 record per department = 4 total)
+```
+cgcahps_programdata/
+  - docA: {
+      program_id: "PW-6II1D3",
+      department: "Emergency",
+      sample_size: 60,  // 12 weeks × 5 surveys
+      access_care: 0.74,
+      coord_care: 0.77,
+      emotional_support: 0.81,
+      information_education: 0.79,
+      respect_patient_prefs: 0.72,
+      start_date: Timestamp(2025-01-01),
+      end_date: Timestamp(2025-03-31)
+    }
+  - docB: { program_id: "PW-6II1D3", department: "Internal Med", sample_size: 60, ... }
+  - docC: { program_id: "PW-6II1D3", department: "Pediatrics", sample_size: 60, ... }
+  - docD: { program_id: "PW-6II1D3", department: "Surgery", sample_size: 60, ... }
+```
+
+## Configuration
+
+Both scripts read Firebase configuration from your `.env` file:
+```
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=...
+VITE_FIREBASE_PROJECT_ID=...
+VITE_FIREBASE_STORAGE_BUCKET=...
+VITE_FIREBASE_MESSAGING_SENDER_ID=...
+VITE_FIREBASE_APP_ID=...
+```
+
+Ensure your `.env` file is properly configured before running the scripts.
 
 ## Troubleshooting
 
-**Error: "Missing or insufficient permissions"**
-- Ensure your Firestore security rules allow writes (currently open per your note)
-- Check that Firebase config is correct
+**"Missing Firebase configuration in .env"**
+- Make sure your `.env` file exists in the project root
+- Verify all `VITE_FIREBASE_*` variables are set
 
-**Script hangs or times out**
-- Reduce `weeksToGenerate` or `surveysPerDeptPerWeek`
-- Firestore has batch size limits (500 docs per batch, handled automatically)
+**"No data showing in dashboard"**
+- Check that you're using the correct `program_id`
+- Verify data was generated (use `--dry-run` first)
+- Check Firebase Console to confirm documents exist
 
-**Scores look wrong in dashboard**
-- Remember: stored scores are 0-25 (raw), displayed as 0-100 (scaled by dashboard)
-- Check `scoreDistribution` ranges match your expectations
+**"Permission denied"**
+- Ensure your Firebase security rules allow the operations
+- For testing, you may need to adjust Firestore rules
 
-## Next Steps
+**Need to regenerate data?**
+```bash
+# Delete old data
+npm run delete-surveys
 
+# Generate fresh data
+npm run generate-mock
+```
 After generating data:
 
 1. Open your Firebase Console → Firestore

@@ -441,6 +441,7 @@ const Heatmap = ({ months, values, departments: depts }) => {
 
 // Helper: transform Firestore data into dashboard format
 function transformFirestoreData(firestoreData, metricType) {
+  console.log('🔄 transformFirestoreData called:', { metricType, surveysCount: firestoreData.surveys?.length })
   const { surveys, weeklyData, departments: deptList, cgcahpsDrivers } = firestoreData
 
   // Scale WHO-5 raw scores (0-25) to standardized 0-100 range
@@ -500,11 +501,53 @@ function transformFirestoreData(firestoreData, metricType) {
       o.count += Number(w.count) || 1
       byWeekOverall.set(w.weekKey, o)
     })
-    const weeksSorted = Array.from(byWeekOverall.keys()).sort().slice(-12)
-    trend = weeksSorted.map(wk => {
+    const weeksSorted = Array.from(byWeekOverall.keys()).sort()
+    const useWeeks = weeksSorted.slice(-12)
+    trend = useWeeks.map(wk => {
       const o = byWeekOverall.get(wk)
-      return { x: wk, y: Math.round(o.count ? o.sum / o.count : 0) }
+      const avg = o.count ? (o.sum / o.count) : 0
+      // keep one-decimal precision to avoid zeroing small changes
+      return { x: wk, y: Math.round(avg * 10) / 10 }
     })
+
+    // Compute segment-specific deltas using last two weeks
+    const lastTwo = weeksSorted.slice(-2)
+    let segmentDeltas = null
+    if (lastTwo.length === 2) {
+      // Derive thresholds from current residents distribution (equal thirds)
+      const scores = residents.map(r => r.score)
+      const minScore = Math.min(...scores, 0)
+      const maxScore = Math.max(...scores, 100)
+      const third = (maxScore - minScore) / 3
+      const lowerT = minScore + third
+      const upperT = minScore + 2 * third
+      const segOf = (v) => (v < lowerT ? 'below' : (v < upperT ? 'average' : 'above'))
+
+      const aggForWeek = (wk) => {
+        const acc = { above: { sum: 0, count: 0 }, average: { sum: 0, count: 0 }, below: { sum: 0, count: 0 } }
+        _weekly.filter(w => w.weekKey === wk).forEach(w => {
+          const avgScaled = (weeklyData && weeklyData.length > 0) ? scaleScore(Number(w.avg || 0)) : Number(w.avg || 0)
+          const cnt = Number(w.count) || 1
+          const seg = segOf(avgScaled)
+          acc[seg].sum += avgScaled * cnt
+          acc[seg].count += cnt
+        })
+        const avg = (o) => (o.count ? (o.sum / o.count) : 0)
+        return { above: avg(acc.above), average: avg(acc.average), below: avg(acc.below) }
+      }
+
+      const prev = aggForWeek(lastTwo[0])
+      const cur = aggForWeek(lastTwo[1])
+      segmentDeltas = {
+        above: Math.round((cur.above - prev.above) * 10) / 10,
+        average: Math.round((cur.average - prev.average) * 10) / 10,
+        below: Math.round((cur.below - prev.below) * 10) / 10
+      }
+    }
+
+    // Attach segment deltas to local state for return
+    // We temporarily stash it on trend object scope; will include in return payload below
+    trend._segmentDeltas = segmentDeltas
   }
 
   // Heatmap (WHO-5 only)
@@ -563,7 +606,8 @@ function transformFirestoreData(firestoreData, metricType) {
     heatmapDepts,
     heatmapValues,
     responseRate,
-    totalSurveys: surveys?.length || 0
+    totalSurveys: surveys?.length || 0,
+    segmentDeltas: (caps.trend && trend && trend._segmentDeltas) ? trend._segmentDeltas : null
   }
 }
 
@@ -1115,10 +1159,13 @@ export default function DashboardPage() {
         setLoading(true)
         setError(null)
         
+        console.log('🔍 Loading dashboard data for user:', user.uid)
+        
         // Get manager profile to find their program_id
         const managerDoc = await getDoc(doc(db, 'manager_info', user.uid))
         
         if (!managerDoc.exists()) {
+          console.warn('❌ Manager profile not found for user:', user.uid)
           setError('Manager profile not found. Using mock data.')
           setUseMockData(true)
           setLoading(false)
@@ -1127,8 +1174,10 @@ export default function DashboardPage() {
 
         const managerData = managerDoc.data()
         const manageProgramId = managerData.program_id
+        console.log('✅ Manager profile found:', { uid: user.uid, programId: manageProgramId, departments: managerData.departments })
         
         if (!manageProgramId) {
+          console.warn('❌ No program_id in manager profile')
           setError('No program ID found in your profile. Using mock data.')
           setUseMockData(true)
           setLoading(false)
@@ -1151,6 +1200,7 @@ export default function DashboardPage() {
           ...d.data(),
           createdAt: d.data().createdAt?.toDate()
         }))
+        console.log(`📊 Loaded ${surveys.length} surveys from programs/${manageProgramId}/anon_surveys`)
 
         // Query weekly aggregates
         const weeklyQuery = query(
@@ -1164,6 +1214,7 @@ export default function DashboardPage() {
           id: d.id,
           ...d.data()
         }))
+        console.log(`📈 Loaded ${weeklyData.length} weekly aggregates from programs/${manageProgramId}/dept_weekly`)
 
         // Query CG-CAHPS driver metrics from new collections
         let cgcahpsDrivers = null
@@ -1185,9 +1236,15 @@ export default function DashboardPage() {
           )
           const nrcDataSnap = await getDocs(nrcDataQuery)
           
+          console.log(`🏥 CG-CAHPS program data: ${programDataSnap.empty ? 'NOT FOUND' : 'FOUND'}`)
+          console.log(`📋 CG-CAHPS NRC data: ${nrcDataSnap.empty ? 'NOT FOUND' : 'FOUND'}`)
+          
           if (!programDataSnap.empty) {
             const programData = programDataSnap.docs[0].data()
             const nrcData = nrcDataSnap.empty ? null : nrcDataSnap.docs[0].data()
+            
+            console.log('✅ CG-CAHPS program data:', programData)
+            console.log('✅ CG-CAHPS NRC data:', nrcData)
             
             // Transform the domain data into driver metrics format
             // Domain mapping: access_care, coord_care, emotional_support, information_education, respect_patient_prefs
@@ -1199,15 +1256,32 @@ export default function DashboardPage() {
               'respect_patient_prefs': 'Respect for Patient Preferences'
             }
             
+            // Normalize any percent-like inputs to ratios 0-1
+            const toRatio = (val) => {
+              if (val == null) return 0
+              const num = typeof val === 'string' ? parseFloat(val) : Number(val)
+              if (!isFinite(num) || isNaN(num)) return 0
+              if (num > 1) return num / 100
+              if (num < 0) return 0
+              return num
+            }
+
             cgcahpsDrivers = Object.entries(domainNames).map(([key, name]) => ({
               name,
-              value: programData[key] || 0,
-              benchmark: nrcData ? (nrcData[key] || 0) : programData[key] || 0
+              value: toRatio(programData[key]),
+              benchmark: toRatio(nrcData ? nrcData[key] : programData[key])
             }))
           }
         } catch (err) {
-          console.log('No CG-CAHPS data found (this is okay):', err)
+          console.log('⚠️ No CG-CAHPS data found (this is okay):', err)
         }
+
+        console.log('💾 Setting Firestore data:', { 
+          surveysCount: surveys.length, 
+          weeklyCount: weeklyData.length,
+          hasCgCahps: !!cgcahpsDrivers,
+          programId: manageProgramId 
+        })
 
         setFirestoreData({
           surveys,
@@ -1219,8 +1293,9 @@ export default function DashboardPage() {
         
         setUseMockData(false)
         setLoading(false)
+        console.log('✅ Dashboard data loaded successfully - using real data')
       } catch (err) {
-        console.error('Error loading dashboard data:', err)
+        console.error('❌ Error loading dashboard data:', err)
         setError(`Failed to load data: ${err.message}. Using mock data.`)
         setUseMockData(true)
         setLoading(false)
@@ -1346,6 +1421,7 @@ export default function DashboardPage() {
   const allResidents = active.residents || []
   const residents = filterByDepartment(allResidents)
   const caps = active.capabilities || metricConfigs[metricOption.value]?.capabilities || { kpis: true, trend: true, heatmap: true, distribution: true, drivers: false }
+  const segmentDeltas = active.segmentDeltas || null
   
   // Get unique departments for filter dropdown
   const availableDepartments = useMemo(() => {
@@ -1413,7 +1489,7 @@ export default function DashboardPage() {
   // KPIs reflect filtered range
   const latestWellness = filteredTrend[filteredTrend.length - 1]?.y ?? 0
   const prevWellness = filteredTrend.length >= 2 ? filteredTrend[filteredTrend.length - 2].y : latestWellness
-  const wellnessDelta = latestWellness - prevWellness
+  const wellnessDelta = Math.round(((latestWellness - prevWellness) || 0) * 10) / 10
   const wellnessClass = classifyScore(latestWellness)
 
   // Show loading state
@@ -1569,7 +1645,7 @@ export default function DashboardPage() {
                     <span>
                       {latestWellness}
                       <Box as="span" color="text-status-success" fontSize="body-s" margin={{ left: 'xs' }}>
-                        ↑ {wellnessDelta}
+                        ↑ {wellnessDelta.toFixed(1)}
                       </Box>
                     </span>
                   }
@@ -1650,6 +1726,7 @@ export default function DashboardPage() {
                   nearAvgCount={nearAvgCount}
                   nearBelowCount={nearBelowCount}
                   wellnessDelta={wellnessDelta}
+                  segmentDeltas={segmentDeltas}
                 />
               </Container>
             )}
@@ -1782,14 +1859,15 @@ const DistributionSection = ({
   nearAboveCount,
   nearAvgCount,
   nearBelowCount,
-  wellnessDelta
+  wellnessDelta,
+  segmentDeltas
 }) => {
   const getSeg = name => segmentAgg.find(s => s.segment === name) || { cohortSize: 0, respondents: 0, responseRate: 0, avgScore: 0 }
   const above = getSeg('Above Average')
   const average = getSeg('Average')
   const below = getSeg('Below Average')
 
-  const Card = ({ title, data, nearCount, color }) => (
+  const Card = ({ title, data, nearCount, color, delta }) => (
     <Container header={<Header variant="h3">{title}</Header>}>
       <SpaceBetween size="xs">
         <Box>
@@ -1814,8 +1892,8 @@ const DistributionSection = ({
         </Box>
         <Box>
           <Box variant="awsui-key-label">Overall Δ</Box>
-          <Box color={wellnessDelta >= 0 ? 'text-status-success' : 'text-status-error'}>
-            {wellnessDelta >= 0 ? '+' : ''}{wellnessDelta}
+          <Box color={(delta ?? wellnessDelta) >= 0 ? 'text-status-success' : 'text-status-error'}>
+            {formatSignedDelta(delta ?? wellnessDelta)}
           </Box>
         </Box>
       </SpaceBetween>
@@ -1832,9 +1910,9 @@ const DistributionSection = ({
         { colspan: { default: 12, s: 4 } },
         { colspan: { default: 12, s: 4 } }
       ]}>
-        <Card title="Above Average" data={above} nearCount={nearAboveCount} color="positive" />
-        <Card title="Average" data={average} nearCount={nearAvgCount} color="normal" />
-        <Card title="Below Average" data={below} nearCount={nearBelowCount} color="warning" />
+        <Card title="Above Average" data={above} nearCount={nearAboveCount} color="positive" delta={segmentDeltas?.above} />
+        <Card title="Average" data={average} nearCount={nearAvgCount} color="normal" delta={segmentDeltas?.average} />
+        <Card title="Below Average" data={below} nearCount={nearBelowCount} color="warning" delta={segmentDeltas?.below} />
       </Grid>
 
       {/* Below Average details (moved here, replaces separate section) */}
@@ -1885,4 +1963,12 @@ const DistributionSection = ({
       </Grid>
     </SpaceBetween>
   )
+}
+
+// Nicely format signed deltas with fixed decimals and plus sign
+function formatSignedDelta(n, decimals = 1) {
+  const p = Math.pow(10, decimals)
+  const rounded = Math.round((Number(n) || 0) * p) / p
+  const value = rounded.toFixed(decimals)
+  return `${rounded >= 0 ? '+' : ''}${value}`
 }
