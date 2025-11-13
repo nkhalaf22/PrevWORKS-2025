@@ -41,11 +41,11 @@ const cgCahpsTrend = [
   { x: 'April', y: 68 }
 ]
 const cgCahpsDriverMetrics = [
-  { name: 'Access to Care', value: 0.74, benchmark: 0.50 },
-  { name: 'Communication', value: 0.81, benchmark: 0.80, highlight: true },
-  { name: 'Office Staff', value: 0.79, benchmark: 0.80 },
-  { name: 'Provider Rating', value: 0.72, benchmark: 0.70 },
-  { name: 'Care Coordination', value: 0.77, benchmark: 0.80 }
+  { name: 'Access to Care', value: 0.74, benchmark: 0.70 },
+  { name: 'Care Coordination', value: 0.77, benchmark: 0.75 },
+  { name: 'Emotional Support', value: 0.81, benchmark: 0.78, highlight: true },
+  { name: 'Information & Education', value: 0.79, benchmark: 0.76 },
+  { name: 'Respect for Patient Preferences', value: 0.72, benchmark: 0.70 }
 ]
 const cgCahpsResidents = [
   { id: 1, dept: 'Emergency', score: 32, responded: true },
@@ -1165,12 +1165,45 @@ export default function DashboardPage() {
           ...d.data()
         }))
 
-        // Query CG-CAHPS driver metrics if available
+        // Query CG-CAHPS driver metrics from new collections
         let cgcahpsDrivers = null
         try {
-          const cgcahpsDoc = await getDoc(doc(db, `programs/${manageProgramId}/cgcahps/latest`))
-          if (cgcahpsDoc.exists()) {
-            cgcahpsDrivers = cgcahpsDoc.data().drivers || null
+          // Fetch program data for this program
+          const programDataQuery = query(
+            collection(db, 'cgcahps_programdata'),
+            where('program_id', '==', manageProgramId),
+            orderBy('start_date', 'desc'),
+            limit(1)
+          )
+          const programDataSnap = await getDocs(programDataQuery)
+          
+          // Fetch latest NRC benchmark data
+          const nrcDataQuery = query(
+            collection(db, 'cgcahps_nrcdata'),
+            orderBy('start_date', 'desc'),
+            limit(1)
+          )
+          const nrcDataSnap = await getDocs(nrcDataQuery)
+          
+          if (!programDataSnap.empty) {
+            const programData = programDataSnap.docs[0].data()
+            const nrcData = nrcDataSnap.empty ? null : nrcDataSnap.docs[0].data()
+            
+            // Transform the domain data into driver metrics format
+            // Domain mapping: access_care, coord_care, emotional_support, information_education, respect_patient_prefs
+            const domainNames = {
+              'access_care': 'Access to Care',
+              'coord_care': 'Care Coordination',
+              'emotional_support': 'Emotional Support',
+              'information_education': 'Information & Education',
+              'respect_patient_prefs': 'Respect for Patient Preferences'
+            }
+            
+            cgcahpsDrivers = Object.entries(domainNames).map(([key, name]) => ({
+              name,
+              value: programData[key] || 0,
+              benchmark: nrcData ? (nrcData[key] || 0) : programData[key] || 0
+            }))
           }
         } catch (err) {
           console.log('No CG-CAHPS data found (this is okay):', err)
@@ -1459,8 +1492,7 @@ export default function DashboardPage() {
               gridDefinition={[
                 { colspan: { default: 12, xs: 12, s: 3 } },
                 { colspan: { default: 12, xs: 12, s: 3 } },
-                { colspan: { default: 12, xs: 12, s: 2 } },
-                { colspan: { default: 12, xs: 12, s: 2 } },
+                { colspan: { default: 12, xs: 12, s: 4 } },
                 { colspan: { default: 12, xs: 12, s: 2 } }
               ]}
             >
