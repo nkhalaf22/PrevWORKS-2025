@@ -9,6 +9,7 @@ import ResidentSurvey from './pages/ResidentSurvey'
 import AuthChoose from "./pages/AuthChoose.jsx";
 import DashboardPage from './pages/Dashboard'
 import ResidentDashboard from "./pages/ResidentDashboard.jsx";
+import './styles/landing-min.css'
 
 export default function Router() {
     return (

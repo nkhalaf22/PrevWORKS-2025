@@ -1,5 +1,5 @@
 import React from 'react'
-import { Box, Button, Container, FormField, Header, SpaceBetween } from '@cloudscape-design/components'
+import { Box, Button, Container, Header, SpaceBetween } from '@cloudscape-design/components'
 import BackLink from '../components/BackLink'
 import Brand from '../components/Brand'
 import styles from './ResidentSurvey.module.css'
@@ -108,8 +108,8 @@ export default function ResidentSurvey() {
 
                         {/* Actions */}
                         <div className={styles.whoActions}>
-                            <div className={styles.whoScore}>Raw WHO-5 score: <strong>{raw}</strong> / 25</div>
-                            <Button variant="primary" disabled={!canSubmit} onClick={submit}>Submit (mock)</Button>
+                            <div className={styles.whoScore}>Raw WHO-5 score: <strong>{raw}</strong> / 25 ({raw*4}%)</div>
+                            <Button variant="primary" disabled={!canSubmit} onClick={submit}>Submit</Button>
                         </div>
 
                         <Box variant="p" color="text-body-secondary">Responses are anonymous.</Box>

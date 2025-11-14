@@ -1,0 +1,65 @@
+/* src/styles/landing-min.css */
+
+.landing-min{
+    /*background:*/
+    /*        radial-gradient(1200px 600px at 70% -150px, rgba(24,119,242,0.06), transparent 70%),*/
+    /*        linear-gradient(#fbfcfe, #f6f8fb);*/
+    min-height:100vh; padding:16px 12px 32px;
+    width: 100%;
+    display:flex; flex-direction:column; align-items:center;
+
+
+}
+
+.landing-min__nav{
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    background: rgba(255,255,255,1.00); /* subtle tint */
+    font-family: var(--awsui-font-family-base, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, "Noto Sans");
+    width: min(1200px, 96vw);
+
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin: 0 auto 12px;
+    padding: 10px 12px;
+
+    /* hairline */
+    border-bottom: 1px solid #dbe7ff;
+    border-radius: 12px;
+}
+.landing-min__brand{ text-decoration:none; color:inherit; }
+.landing-min__nav-actions{ display:inline-flex; gap:8px; }
+
+.landing-min__hero, .landing-min__cards{ width:min(1100px,96vw); margin:8px 0; }
+
+/* hero layout */
+.landing-hero{
+    display:grid; grid-template-columns:1.15fr .85fr; gap:24px; align-items:center;
+}
+.landing-hero__copy{ display:grid; gap:18px; }
+.landing-hero__image img{
+    width:100%; height:100%; object-fit:cover; border-radius:12px;
+    box-shadow:0 12px 30px rgba(0,0,0,.08);
+}
+
+/* split CTAs */
+.landing-cta-grid{ display:grid; gap:16px; grid-template-columns:1fr; }
+@media (min-width: 860px){ .landing-cta-grid{ grid-template-columns:1fr 1fr; } }
+.landing-cta{
+    padding:16px; border:1px solid #e5e7eb; border-radius:12px; background:#fff;
+    box-shadow:0 2px 10px rgba(0,0,0,.03);
+}
+.landing-cta__buttons{ display:grid; gap:8px; margin-top:8px; }
+.landing-cta__sub{ color:#5f6b7a; }
+
+.landing-min__list{ margin:0; padding-left:18px; }
+.landing-min__list li{ margin:2px 0; }
+
+/* responsive header strip */
+@media (max-width:640px){
+    .landing-min__nav{ flex-direction:column; gap:10px; align-items:stretch; }
+    .landing-hero{ grid-template-columns:1fr; }
+}
