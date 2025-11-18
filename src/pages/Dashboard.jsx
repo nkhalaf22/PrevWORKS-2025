@@ -1602,22 +1602,12 @@ export default function DashboardPage() {
                     selectedOption={range}
                     onChange={e => setRange(e.detail.selectedOption)}
                     options={[
-                      { label: 'Relative — Last 4 weeks', value: '4w' },
-                      { label: 'Relative — Last 8 weeks', value: '8w' },
-                      { label: 'Relative — Last 12 weeks', value: '12w' },
-                      { label: 'Relative — Last 6 months', value: '6m' },
-                      { label: 'Relative — Last 12 months', value: '12m' },
-                      { label: 'Calendar — MTD', value: 'mtd' },
-                      { label: 'Calendar — Last month', value: 'lm' },
-                      { label: 'Calendar — QTD', value: 'qtd' },
-                      { label: 'Calendar — Last quarter', value: 'lq' },
-                      { label: 'Calendar — YTD', value: 'ytd' },
-                      { label: 'Calendar — Last year', value: 'ly' },
-                      { label: 'Cohort — Since cohort start', value: 'cohort-std' },
-                      { label: 'Cohort — First 90 days', value: 'cohort-90' },
-                      { label: 'Survey — Current cycle', value: 'cycle-cur' },
-                      { label: 'Survey — Previous cycle', value: 'cycle-prev' },
-                      { label: 'Custom range…', value: 'custom' }
+                      { label: 'Last Week', value: '1w' },
+                      { label: 'Last Month', value: '4w' },
+                      { label: 'Last 3 Months', value: '12w' },
+                      { label: 'Last 6 Months', value: '6m' },
+                      { label: 'Last 12 Months', value: '12m' },
+                      { label: 'All', value: 'cohort-std' },
                     ]}
                   />
                 </SpaceBetween>
