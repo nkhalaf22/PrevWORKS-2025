@@ -158,8 +158,8 @@ function buildDistribution(residents) {
 
   residents.forEach(r => {
     const seg = segmentOf(r.score)
-    if (!segmentMap[seg]) segmentMap[seg] = { segment: seg, cohortSize: 0, respondents: 0, totalScore: 0 }
-    segmentMap[seg].cohortSize++
+    if (!segmentMap[seg]) segmentMap[seg] = { segment: seg, numResidents: 0, respondents: 0, totalScore: 0 }
+    segmentMap[seg].numResidents++
     if (r.responded) segmentMap[seg].respondents++
     segmentMap[seg].totalScore += r.score
 
@@ -173,10 +173,10 @@ function buildDistribution(residents) {
 
   const segmentAgg = Object.values(segmentMap).map(o => ({
     segment: o.segment,
-    cohortSize: o.cohortSize,
+    numResidents: o.numResidents,
     respondents: o.respondents,
-    responseRate: o.cohortSize ? Math.round((o.respondents / o.cohortSize) * 100) : 0,
-    avgScore: o.cohortSize ? Math.round(o.totalScore / o.cohortSize) : 0
+    responseRate: o.numResidents ? Math.round((o.respondents / o.numResidents) * 100) : 0,
+    avgScore: o.numResidents ? Math.round(o.totalScore / o.numResidents) : 0
   })).sort((a, b) => a.segment.localeCompare(b.segment))
 
   // Department breakdown helper per segment
@@ -184,19 +184,19 @@ function buildDistribution(residents) {
     const total = list.length || 1
     const m = {}
     list.forEach(r => {
-      if (!m[r.dept]) m[r.dept] = { dept: r.dept, cohortSize: 0, respondents: 0, sum: 0 }
-      m[r.dept].cohortSize++
+      if (!m[r.dept]) m[r.dept] = { dept: r.dept, numResidents: 0, respondents: 0, sum: 0 }
+      m[r.dept].numResidents++
       if (r.responded) m[r.dept].respondents++
       m[r.dept].sum += r.score
     })
     return Object.values(m)
       .map(d => ({ 
         dept: d.dept, 
-        cohortSize: d.cohortSize, 
+        numResidents: d.numResidents, 
         respondents: d.respondents,
-        responseRate: d.cohortSize ? Math.round((d.respondents / d.cohortSize) * 100) : 0,
-        pct: Math.round((d.cohortSize / total) * 100), 
-        avg: Math.round(d.sum / d.cohortSize) 
+        responseRate: d.numResidents ? Math.round((d.respondents / d.numResidents) * 100) : 0,
+        pct: Math.round((d.numResidents / total) * 100), 
+        avg: Math.round(d.sum / d.numResidents) 
       }))
       .sort((a, b) => a.avg - b.avg)
   }
@@ -690,7 +690,7 @@ function exportToCsv(data) {
     lines.push('Metric,Value')
     lines.push(`Wellness Score,${kpis.latestWellness}`)
     lines.push(`Wellness Delta,${kpis.wellnessDelta >= 0 ? '+' : ''}${kpis.wellnessDelta}`)
-    lines.push(`Cohort Size,${kpis.cohortSize}`)
+    lines.push(`Number of Residents,${kpis.numResidents}`)
     if (kpis.responseRate != null) {
       lines.push(`Response Rate,${kpis.responseRate}%`)
     }
@@ -723,31 +723,31 @@ function exportToCsv(data) {
   // Distribution section
   if (distribution) {
     lines.push('DISTRIBUTION BY SEGMENT')
-    lines.push('Segment,Cohort Size,Respondents,Response Rate (%),Avg Score')
+    lines.push('Segment,Number of Residents,Respondents,Response Rate (%),Avg Score')
     distribution.segmentAgg.forEach(seg => {
-      lines.push(`${seg.segment},${seg.cohortSize},${seg.respondents},${seg.responseRate},${seg.avgScore}`)
+      lines.push(`${seg.segment},${seg.numResidents},${seg.respondents},${seg.responseRate},${seg.avgScore}`)
     })
     lines.push('')
     
     // Department breakdowns
     lines.push('BELOW AVERAGE BY DEPARTMENT')
-    lines.push('Department,Cohort Size,Respondents,Response Rate (%),% of Below Avg,Avg Score')
+    lines.push('Department,Number of Residents,Respondents,Response Rate (%),% of Below Avg,Avg Score')
     distribution.belowAvgDeptBreakdown.forEach(dept => {
-      lines.push(`${dept.dept},${dept.cohortSize},${dept.respondents},${dept.responseRate},${dept.pct},${dept.avg}`)
+      lines.push(`${dept.dept},${dept.numResidents},${dept.respondents},${dept.responseRate},${dept.pct},${dept.avg}`)
     })
     lines.push('')
     
     lines.push('AVERAGE BY DEPARTMENT')
-    lines.push('Department,Cohort Size,Respondents,Response Rate (%),Avg Score')
+    lines.push('Department,Number of Residents,Respondents,Response Rate (%),Avg Score')
     distribution.avgDeptBreakdown.forEach(dept => {
-      lines.push(`${dept.dept},${dept.cohortSize},${dept.respondents},${dept.responseRate},${dept.avg}`)
+      lines.push(`${dept.dept},${dept.numResidents},${dept.respondents},${dept.responseRate},${dept.avg}`)
     })
     lines.push('')
     
     lines.push('ABOVE AVERAGE BY DEPARTMENT')
-    lines.push('Department,Cohort Size,Respondents,Response Rate (%),Avg Score')
+    lines.push('Department,Number of Residents,Respondents,Response Rate (%),Avg Score')
     distribution.aboveDeptBreakdown.forEach(dept => {
-      lines.push(`${dept.dept},${dept.cohortSize},${dept.respondents},${dept.responseRate},${dept.avg}`)
+      lines.push(`${dept.dept},${dept.numResidents},${dept.respondents},${dept.responseRate},${dept.avg}`)
     })
     lines.push('')
   }
@@ -920,8 +920,8 @@ function exportToPdf(data) {
       <div class="kpi-value ${kpis.wellnessDelta >= 0 ? 'positive' : 'error'}">${kpis.wellnessDelta >= 0 ? '+' : ''}${kpis.wellnessDelta}</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Cohort Size</div>
-      <div class="kpi-value">${kpis.cohortSize}</div>
+      <div class="kpi-label">Number of Residents</div>
+      <div class="kpi-value">${kpis.numResidents}</div>
     </div>
     ${kpis.responseRate != null ? `
     <div class="kpi-card">
@@ -987,7 +987,7 @@ function exportToPdf(data) {
     <thead>
       <tr>
         <th>Segment</th>
-        <th>Cohort Size</th>
+        <th>Number of Residents</th>
         <th>Respondents</th>
         <th>Response Rate (%)</th>
         <th>Avg Score</th>
@@ -997,7 +997,7 @@ function exportToPdf(data) {
       ${distribution.segmentAgg.map(seg => `
         <tr>
           <td>${seg.segment}</td>
-          <td>${seg.cohortSize}</td>
+          <td>${seg.numResidents}</td>
           <td>${seg.respondents}</td>
           <td>${seg.responseRate}</td>
           <td>${seg.avgScore}</td>
@@ -1011,7 +1011,7 @@ function exportToPdf(data) {
     <thead>
       <tr>
         <th>Department</th>
-        <th>Cohort Size</th>
+        <th>Number of Residents</th>
         <th>Respondents</th>
         <th>Response Rate (%)</th>
         <th>% of Below Avg</th>
@@ -1022,7 +1022,7 @@ function exportToPdf(data) {
       ${distribution.belowAvgDeptBreakdown.map(dept => `
         <tr>
           <td>${dept.dept}</td>
-          <td>${dept.cohortSize}</td>
+          <td>${dept.numResidents}</td>
           <td>${dept.respondents}</td>
           <td>${dept.responseRate}</td>
           <td>${dept.pct}</td>
@@ -1037,7 +1037,7 @@ function exportToPdf(data) {
     <thead>
       <tr>
         <th>Department</th>
-        <th>Cohort Size</th>
+        <th>Number of Residents</th>
         <th>Respondents</th>
         <th>Response Rate (%)</th>
         <th>Avg Score</th>
@@ -1047,7 +1047,7 @@ function exportToPdf(data) {
       ${distribution.avgDeptBreakdown.map(dept => `
         <tr>
           <td>${dept.dept}</td>
-          <td>${dept.cohortSize}</td>
+          <td>${dept.numResidents}</td>
           <td>${dept.respondents}</td>
           <td>${dept.responseRate}</td>
           <td>${dept.avg}</td>
@@ -1061,7 +1061,7 @@ function exportToPdf(data) {
     <thead>
       <tr>
         <th>Department</th>
-        <th>Cohort Size</th>
+        <th>Number of Residents</th>
         <th>Respondents</th>
         <th>Response Rate (%)</th>
         <th>Avg Score</th>
@@ -1071,7 +1071,7 @@ function exportToPdf(data) {
       ${distribution.aboveDeptBreakdown.map(dept => `
         <tr>
           <td>${dept.dept}</td>
-          <td>${dept.cohortSize}</td>
+          <td>${dept.numResidents}</td>
           <td>${dept.respondents}</td>
           <td>${dept.responseRate}</td>
           <td>${dept.avg}</td>
@@ -1356,7 +1356,7 @@ export default function DashboardPage() {
       kpis: caps.kpis ? {
         latestWellness,
         wellnessDelta,
-        cohortSize: residents.length,
+        numResidents: residents.length,
         responseRate
       } : null,
       trend: filteredTrend,
@@ -1385,7 +1385,7 @@ export default function DashboardPage() {
       kpis: caps.kpis ? {
         latestWellness,
         wellnessDelta,
-        cohortSize: residents.length,
+        numResidents: residents.length,
         responseRate
       } : null,
       trend: filteredTrend,
@@ -1651,7 +1651,7 @@ export default function DashboardPage() {
                   }
                   status={wellnessClass}
                 />
-                <MetricCard title="Cohort Size" value={residents.length} />
+                <MetricCard title="Number of Residents" value={residents.length} />
                 {responseRate != null && (
                   <MetricCard title="Response Rate" value={`${responseRate} %`} />
                 )}
@@ -1862,7 +1862,7 @@ const DistributionSection = ({
   wellnessDelta,
   segmentDeltas
 }) => {
-  const getSeg = name => segmentAgg.find(s => s.segment === name) || { cohortSize: 0, respondents: 0, responseRate: 0, avgScore: 0 }
+  const getSeg = name => segmentAgg.find(s => s.segment === name) || { numResidents: 0, respondents: 0, responseRate: 0, avgScore: 0 }
   const above = getSeg('Above Average')
   const average = getSeg('Average')
   const below = getSeg('Below Average')
@@ -1871,8 +1871,8 @@ const DistributionSection = ({
     <Container header={<Header variant="h3">{title}</Header>}>
       <SpaceBetween size="xs">
         <Box>
-          <Box variant="awsui-key-label">Cohort Size</Box>
-          <Box>{data.cohortSize}</Box>
+          <Box variant="awsui-key-label">Number of Residents</Box>
+          <Box>{data.numResidents}</Box>
         </Box>
         <Box>
           <Box variant="awsui-key-label">Respondents</Box>
@@ -1921,7 +1921,7 @@ const DistributionSection = ({
           items={belowAvgDeptBreakdown}
           columnDefinitions={[
             { id: 'dept', header: 'Department', cell: i => i.dept },
-            { id: 'cohortSize', header: 'Cohort Size', cell: i => i.cohortSize },
+            { id: 'numResidents', header: 'Number of Residents', cell: i => i.numResidents },
             { id: 'respondents', header: 'Respondents', cell: i => i.respondents },
             { id: 'responseRate', header: 'Response Rate', cell: i => i.responseRate + '%' },
             { id: 'pct', header: '% of Below Avg', cell: i => i.pct + '%' },
@@ -1939,7 +1939,7 @@ const DistributionSection = ({
             items={avgDeptBreakdown}
             columnDefinitions={[
               { id: 'dept', header: 'Department', cell: i => i.dept },
-              { id: 'cohortSize', header: 'Cohort Size', cell: i => i.cohortSize },
+              { id: 'numResidents', header: 'Number of Residents', cell: i => i.numResidents },
               { id: 'responseRate', header: 'Response Rate', cell: i => i.responseRate + '%' },
               { id: 'avg', header: 'Avg Score', cell: i => i.avg }
             ]}
@@ -1952,7 +1952,7 @@ const DistributionSection = ({
             items={aboveDeptBreakdown}
             columnDefinitions={[
               { id: 'dept', header: 'Department', cell: i => i.dept },
-              { id: 'cohortSize', header: 'Cohort Size', cell: i => i.cohortSize },
+              { id: 'numResidents', header: 'Number of Residents', cell: i => i.numResidents },
               { id: 'responseRate', header: 'Response Rate', cell: i => i.responseRate + '%' },
               { id: 'avg', header: 'Avg Score', cell: i => i.avg }
             ]}
