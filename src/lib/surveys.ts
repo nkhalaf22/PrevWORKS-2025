@@ -12,7 +12,14 @@ export function calcWho5Score(a:{q1:number;q2:number;q3:number;q4:number;q5:numb
     return (a.q1 + a.q2 + a.q3 + a.q4 + a.q5)
 }
 
-export async function submitResidentWho5(answers:{q1:number;q2:number;q3:number;q4:number;q5:number}) {
+
+export async function submitResidentWho5(answers: {
+    q1: number
+    q2: number
+    q3: number
+    q4: number
+    q5: number
+}) {
     const user = auth.currentUser
     if (!user) throw new Error('not-authenticated')
 
@@ -25,37 +32,50 @@ export async function submitResidentWho5(answers:{q1:number;q2:number;q3:number;
     if (!programId || !department) throw new Error('missing-program-or-department')
 
     const score = calcWho5Score(answers)
-    const id = dayKey(new Date()) // ← fixed per day
+    const id = dayKey(new Date()) // fixed per day per resident
 
     const batch = writeBatch(db)
 
-    // 1) resident daily survey
+    // 1) resident daily survey (enforces "once per day per resident")
     const residentSurveyRef = doc(db, `resident_info/${user.uid}/surveys/${id}`)
-    batch.set(residentSurveyRef, {
-        who5: answers,
-        score,
-        dayKey: id,
-        createdAt: serverTimestamp(),
-    }, { merge: false }) // ensure create-only semantics
+    batch.set(
+        residentSurveyRef,
+        {
+            who5: answers,
+            score,
+            dayKey: id,
+            createdAt: serverTimestamp(),
+        },
+        { merge: false } // create-only semantics
+    )
 
-    // 2) anonymous mirror (same id)
-    const anonRef = doc(db, `programs/${programId}/anon_surveys/${id}`)
-    batch.set(anonRef, {
-        department,
-        score,
-        dayKey: id,
-        createdAt: serverTimestamp(),
-    }, { merge: false })
+    // 2) anonymous mirror – one doc per response (auto-id)
+    const anonCollectionRef = collection(db, `programs/${programId}/anon_surveys`)
+    const anonRef = doc(anonCollectionRef)
+
+    batch.set(
+        anonRef,
+        {
+            program_id: programId,
+            department,
+            resident_id: user.uid, // <-- needed for unique counting
+            score,
+            dayKey: id,
+            createdAt: serverTimestamp(),
+        },
+        { merge: false }
+    )
 
     try {
         await batch.commit()
-    } catch (e:any) {
-        // Firestore returns ALREADY_EXISTS if doc exists and rules forbid update
+    } catch (e: any) {
+        // Firestore returns ALREADY_EXISTS if resident_survey doc exists and rules forbid update
         if (String(e?.code).includes('already-exists')) {
             throw new Error('already-today')
         }
         throw e
     }
+
     return { score, surveyId: id, programId, department }
 }
 
@@ -63,7 +83,7 @@ export interface ProgramData {
     access_care: number;
     coord_care: number;
     department: string;
-    end_date: Timestamp; 
+    end_date: Timestamp;
     information_education: number;
     program_id: string;
     respect_patient_prefs: number;
