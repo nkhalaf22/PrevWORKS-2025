@@ -27,6 +27,16 @@ import CgCahpsDrivers from '../components/CgCahps'
 const auth = getAuth()
 const db = getFirestore()
 
+// Presets aligned with Resident dashboard
+const PRESETS = [
+  { id: '1w',  label: '1 week',   value: '1w' },
+  { id: '1m',  label: '1 month',  value: '4w' },
+  { id: '3m',  label: '3 months', value: '12w' },
+  { id: '6m',  label: '6 months', value: '6m' },
+  { id: '1y',  label: '1 year',   value: '12m' },
+  { id: 'all', label: 'All',      value: 'cohort-std' }
+]
+
 // ---------------- Metric-Specific Mock Data ---------------------------------
 // CG-CAHPS trend (0–100 composite)
 const cgCahpsTrend = [
@@ -502,7 +512,7 @@ function transformFirestoreData(firestoreData, metricType) {
       byWeekOverall.set(w.weekKey, o)
     })
     const weeksSorted = Array.from(byWeekOverall.keys()).sort()
-    const useWeeks = weeksSorted.slice(-12)
+    const useWeeks = weeksSorted // don't pre-slice; allow UI presets to filter
     trend = useWeeks.map(wk => {
       const o = byWeekOverall.get(wk)
       const avg = o.count ? (o.sum / o.count) : 0
@@ -570,7 +580,7 @@ function transformFirestoreData(firestoreData, metricType) {
     // Sort departments alphabetically for consistent display
     heatmapDepts = depts.sort()
 
-    const weeks = [...new Set((_weekly || []).map(w => w.weekKey))].sort().slice(-9)
+    const weeks = [...new Set((_weekly || []).map(w => w.weekKey))].sort()
     heatmapMonths.push(...weeks)
 
     heatmapDepts.forEach(dept => {
@@ -623,6 +633,23 @@ function deriveIsoWeekKey(date) {
   return `${y}-W${ww}`
 }
 
+// Convert ISO week key (e.g., 2025-W43) to the Monday date of that week (local time)
+function isoWeekKeyToDate(weekKey) {
+  const m = /^([0-9]{4})-W([0-9]{2})$/.exec(String(weekKey) || '')
+  if (!m) return new Date()
+  const year = Number(m[1])
+  const week = Number(m[2])
+  // Start with Jan 4th: guaranteed to be in week 1 per ISO
+  const jan4 = new Date(year, 0, 4)
+  const dayOfWeek = jan4.getDay() || 7 // 1..7 (Mon..Sun)
+  const mondayOfWeek1 = new Date(jan4)
+  mondayOfWeek1.setDate(jan4.getDate() - (dayOfWeek - 1))
+  const monday = new Date(mondayOfWeek1)
+  monday.setDate(mondayOfWeek1.getDate() + (week - 1) * 7)
+  monday.setHours(0,0,0,0)
+  return monday
+}
+
 // Helper: compute slice window for a selected time range
 function computeSliceWindow(rangeValue, total) {
   // half split for survey cycles
@@ -631,8 +658,10 @@ function computeSliceWindow(rangeValue, total) {
 
   // counts for rolling/calendar/cohort ranges mapped to "last N points"
   const countMap = {
-    '4w': 4, '8w': 8, '12w': 12,
-    '6m': 6, '12m': 12, '24m': 24,
+    // Weekly bins: w = weeks, m = months (~4.33w), but we use week bins
+    '1w': 1, '4w': 4, '8w': 8, '12w': 12,
+    // Map months to approximate week counts per user request
+    '6m': 26, '12m': 52, '24m': 104,
     'mtd': 1, 'lm': 1, 'qtd': 3, 'lq': 3,
     'ytd': 12, 'ly': 12,
     'cohort-std': total, 'cohort-90': 3,
@@ -1127,7 +1156,7 @@ function exportToPdf(data) {
 export default function DashboardPage() {
   const [metricOption, setMetricOption] = useState({ label: 'CG-CAHPS', value: 'CG-CAHPS' })
   const [departmentFilter, setDepartmentFilter] = useState({ label: 'All Departments', value: 'all' })
-  const [range, setRange] = useState({ label: 'Last 12 Months', value: '12m' })
+  const [range, setRange] = useState({ label: 'All', value: 'cohort-std' })
   
   // Auth & Firestore state
   const [loading, setLoading] = useState(true)
@@ -1464,6 +1493,21 @@ export default function DashboardPage() {
     [wellnessTrend, trendWindow.start, trendWindow.end]
   )
 
+  // Derive readable start/end dates from ISO week keys for caption
+  const trendDateRange = useMemo(() => {
+    if (!caps.trend || !filteredTrend || filteredTrend.length === 0) return null
+    try {
+      const startWk = filteredTrend[0].x
+      const endWk = filteredTrend[filteredTrend.length - 1].x
+      const start = isoWeekKeyToDate(startWk)
+      const end = isoWeekKeyToDate(endWk)
+      end.setDate(end.getDate() + 6) // end of the ISO week
+      return { start, end }
+    } catch {
+      return null
+    }
+  }, [caps.trend, filteredTrend])
+
   const monthsWindow = computeSliceWindow(range.value, heatmapMonths.length || 0)
   const filteredMonths = useMemo(
     () => heatmapMonths.slice(monthsWindow.start, monthsWindow.end),
@@ -1597,19 +1641,18 @@ export default function DashboardPage() {
               </Container>
               <Container>
                 <SpaceBetween size="xs">
-                  <Box variant="awsui-key-label">Time Range</Box>
-                  <Select
-                    selectedOption={range}
-                    onChange={e => setRange(e.detail.selectedOption)}
-                    options={[
-                      { label: 'Last Week', value: '1w' },
-                      { label: 'Last Month', value: '4w' },
-                      { label: 'Last 3 Months', value: '12w' },
-                      { label: 'Last 6 Months', value: '6m' },
-                      { label: 'Last 12 Months', value: '12m' },
-                      { label: 'All', value: 'cohort-std' },
-                    ]}
-                  />
+                  <Box variant="awsui-key-label">Range</Box>
+                  <div style={{ display:'inline-flex', gap:8, flexWrap:'wrap' }}>
+                    {PRESETS.map(p => (
+                      <Button
+                        key={p.id}
+                        variant={range.value === p.value ? 'primary' : 'normal'}
+                        onClick={() => setRange({ label: p.label, value: p.value })}
+                      >
+                        {p.label}
+                      </Button>
+                    ))}
+                  </div>
                 </SpaceBetween>
               </Container>
               <Container>
@@ -1662,21 +1705,48 @@ export default function DashboardPage() {
             {caps.trend && (
               <Grid gridDefinition={[{ colspan: { default: 12 } }]}>
                 <Container header={<Header variant="h3">{metricOption.label} Trend</Header>}>
-                  <LineChart
-                    xScaleType="categorical"
-                    series={[{ title: metricOption.label, type: 'line', data: filteredTrend }]}
-                    xDomain={filteredTrend.map(p => p.x)}
-                    yDomain={[0, 100]}
-                    i18nStrings={{
-                      filterLabel: 'Filter',
-                      filterPlaceholder: 'Filter',
-                      detailPopoverDismissAriaLabel: 'Dismiss',
-                      legendAriaLabel: 'Legend',
-                      chartAriaRoleDescription: 'line chart'
-                    }}
-                    ariaLabel="Metric score trend"
-                    height={260}
-                  />
+                  <Box variant="p" color="text-body-secondary" margin={{ bottom: 's' }}>
+                    {metricOption.value === 'WHO-5' ? 'WHO-5 scores (0–100). Higher is better.' : ''}
+                    {trendDateRange && (
+                      <> Showing <strong>{trendDateRange.start.toLocaleDateString()}</strong> – <strong>{trendDateRange.end.toLocaleDateString()}</strong> (inclusive).</>
+                    )}
+                  </Box>
+                  {(() => {
+                    let timeSeries = filteredTrend.map(p => ({ x: isoWeekKeyToDate(p.x), y: p.y }))
+                    // For 1-week range, render two points (start/end) to show a line
+                    if (range.value === '1w' && timeSeries.length === 1) {
+                      const start = new Date(timeSeries[0].x)
+                      const end = new Date(start)
+                      end.setDate(start.getDate() + 6)
+                      timeSeries = [
+                        { x: start, y: timeSeries[0].y },
+                        { x: end,   y: timeSeries[0].y }
+                      ]
+                    }
+                    return (
+                      <LineChart
+                        xScaleType="time"
+                        series={[{ title: metricOption.label, type: 'line', data: timeSeries }]}
+                        yDomain={[0, 100]}
+                        i18nStrings={{
+                          filterLabel: 'Filter',
+                          filterPlaceholder: 'Filter',
+                          detailPopoverDismissAriaLabel: 'Dismiss',
+                          legendAriaLabel: 'Legend',
+                          chartAriaRoleDescription: 'line chart',
+                          xTickFormatter: d => {
+                            const rv = range.value
+                            if (rv === '1w') return d.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' })
+                            if (rv === '4w') return d.toLocaleDateString(undefined, { month:'short', day:'numeric' })
+                            if (rv === '12w' || rv === '6m' || rv === '12m') return d.toLocaleDateString(undefined, { month:'short' })
+                            return d.toLocaleDateString()
+                          }
+                        }}
+                        ariaLabel="Metric score trend"
+                        height={260}
+                      />
+                    )
+                  })()}
                 </Container>
               </Grid>
             )}
