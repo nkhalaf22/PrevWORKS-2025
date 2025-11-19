@@ -37,6 +37,20 @@
         }
       ],
       "density": "SPARSE_ALL"
+    },
+    {
+      "collectionGroup": "cgcahps_programdata",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "program_id",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "start_date",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

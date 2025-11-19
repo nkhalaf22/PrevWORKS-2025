@@ -48,7 +48,7 @@ export default function ManagerLogin() {
                         <Input value={form.password} onChange={on('password')} autoComplete="current-password" type="password" />
                     </FormField>
                     <div className="auth-subtle-link">
-                        New program? <Link to="/program/register">Create your program</Link>
+                        New program or manager? <Link to="/program/register">Create your program/manager</Link>
                     </div>
                 </SpaceBetween>
             </Form>

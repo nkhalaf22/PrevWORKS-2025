@@ -8,12 +8,21 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest --environment=jsdom"
+    "test": "vitest --environment=jsdom",
+    "generate-mock": "node scripts/generate-mock-data-simple.js",
+    "generate-mock:dry": "node scripts/generate-mock-data-simple.js --dry-run",
+    "generate-mock:who5": "node scripts/generate-mock-data-simple.js --who5-only",
+    "generate-mock:cgcahps": "node scripts/generate-mock-data-simple.js --cgcahps-only",
+    "delete-surveys": "node scripts/delete-anon-surveys.js",
+    "delete-surveys:dry": "node scripts/delete-anon-surveys.js --dry-run",
+    "delete-surveys:who5": "node scripts/delete-anon-surveys.js --who5-only",
+    "delete-surveys:cgcahps": "node scripts/delete-anon-surveys.js --cgcahps-only"
   },
   "dependencies": {
     "@cloudscape-design/components": "^3.0.1096",
     "@cloudscape-design/global-styles": "^1.0.45",
     "firebase": "^12.3.0",
+    "papaparse": "^5.4.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-router-dom": "^7.9.1"
@@ -26,6 +35,7 @@
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
     "@vitejs/plugin-react": "^5.0.3",
+    "dotenv": "^16.4.7",
     "eslint": "^9.36.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
