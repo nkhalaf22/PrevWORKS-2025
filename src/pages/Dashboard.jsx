@@ -234,6 +234,148 @@ function buildDistribution(residents) {
   }
 }
 
+function filterSurveysByRange(surveys, rangeValue) {
+  if (rangeValue === 'cohort-std' || !surveys || surveys.length === 0) {
+    return surveys;
+  }
+
+  // 1. Sort the surveys by date (newest first) to find the 'latest' date
+  const sortedSurveys = [...surveys].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+  // 2. Determine the time window based on the latest survey date and the range value.
+  // Note: We use the *latest* survey date as the end-point for rolling windows.
+  const latestDate = sortedSurveys[0].createdAt;
+  let startDate = null;
+
+  // Helper map for time range in days
+  // 1 week = 7 days, 4 weeks = 28 days, 12 weeks = 84 days, 6 months ≈ 182 days, 1 year ≈ 365 days
+  const rangeToDays = {
+    '1w': 7,
+    '4w': 28,
+    '12w': 84,
+    '6m': 182,
+    '1y': 365,
+  };
+
+  const daysToSubtract = rangeToDays[rangeValue];
+
+  if (daysToSubtract) {
+    startDate = new Date(latestDate);
+    // Subtract the number of milliseconds in the range + 1 day buffer to ensure the range includes the start date
+    startDate.setDate(latestDate.getDate() - daysToSubtract);
+    // Set time to 00:00:00 to include the full start day
+    startDate.setHours(0, 0, 0, 0);
+  } else {
+    // Handle other special cases if needed (e.g., 'cycle-prev', 'cycle-cur' if defined)
+    // For now, treat unknown ranges as 'all' or return an empty array if strict.
+    return surveys; // Or handle other special cases as needed
+  }
+
+  // 3. Filter the surveys
+  return surveys.filter(survey => {
+    // If startDate is set, only include surveys created *on or after* the startDate
+    return startDate ? survey.createdAt.getTime() >= startDate.getTime() : true;
+  });
+}
+
+/**
+ * Calculates the percentage of below-average survey scores for each department
+ * within a given time range.
+ *
+ * @param {Array<Object>} filteredSurveys - Array of survey objects for the time range.
+ * @param {number} overallAverageScore - The mean score across *all* surveys in this time range.
+ * @returns {Array<Object>} An array of objects: [{ department: string, percentBelow: number }]
+ */
+function computeDepartmentBelowAverage(filteredSurveys, overallAverageScore) {
+  if (!filteredSurveys || filteredSurveys.length === 0) {
+    return [];
+  }
+
+  // 1. Group surveys by department and count totals/below-average responses
+  const departmentAggregates = filteredSurveys.reduce((acc, survey) => {
+    const dept = survey.department || 'Unknown';
+    const score = Number(survey.score) || 0; // Ensure score is a number
+
+    if (!acc[dept]) {
+      acc[dept] = {
+        department: dept,
+        totalCount: 0,
+        belowAverageCount: 0,
+      };
+    }
+
+    acc[dept].totalCount++;
+
+    // A score is "below average" if it is strictly less than the overall mean.
+    if (score < overallAverageScore) {
+      acc[dept].belowAverageCount++;
+    }
+
+    return acc;
+  }, {});
+
+  // 2. Calculate the percentage for each department
+  const results = Object.values(departmentAggregates).map(deptData => {
+    const total = deptData.totalCount;
+    const below = deptData.belowAverageCount;
+
+    const percentBelow = total > 0 ? (below / total) * 100 : 0;
+
+    return {
+      department: deptData.department,
+      totalCount: total,
+      belowAverageCount: below,
+      // Round to two decimal places for cleaner display
+      percentBelow: Math.round(percentBelow * 100) / 100,
+    };
+  });
+
+  // Optional: Sort results by percentBelow descending to easily spot top departments
+  return results.sort((a, b) => b.percentBelow - a.percentBelow);
+}
+
+/**
+ * Transforms the department below-average data into the series format
+ * required for the Cloudscape BarChart (grouped bar chart).
+ *
+ * @param {Array<Object>} departmentBelowAverageData - Output from computeDepartmentBelowAverage.
+ * @returns {Array<Object>} BarChart series array.
+ */
+function transformDataForBarChart(departmentBelowAverageData) {
+  if (!departmentBelowAverageData || departmentBelowAverageData.length === 0) {
+    return [];
+  }
+
+  // Series 1: Percentage Below Average
+  const belowAverageSeries = {
+    title: 'Below Average',
+    type: 'bar',
+    color: '#dc2626',
+    data: departmentBelowAverageData.map(d => ({
+      x: d.department,
+      y: d.percentBelow,
+      totalCount: d.totalCount,
+      belowAverageCount: d.belowAverageCount
+    }))
+  };
+
+  // Series 2: Percentage At or Above Average (100% - percentBelow)
+  const atOrAboveAverageSeries = {
+    title: 'At or Above Average',
+    type: 'bar',
+    color: '#16a34a',
+    data: departmentBelowAverageData.map(d => ({
+      x: d.department,
+      y: Math.round((100 - d.percentBelow) * 100) / 100, // Ensure same rounding as percentBelow
+      totalCount: d.totalCount,
+      atOrAboveCount: d.totalCount - d.belowAverageCount
+    }))
+  };
+
+  return [belowAverageSeries, atOrAboveAverageSeries];
+}
+
+
 // ---------------- UI Subcomponents -----------------------------------------
 const MetricCard = ({ title, value, status }) => (
   <Container header={<Header variant="h3">{title}</Header>}>
@@ -247,6 +389,61 @@ const MetricCard = ({ title, value, status }) => (
     )}
   </Container>
 )
+
+// New Component: DepartmentDistributionChart
+const DepartmentDistributionChart = ({ chartData }) => {
+  const departmentNames = chartData[0]?.data.map(d => d.x) || [];
+
+  return (
+    <Container header={<Header variant="h2">Distribution by Department</Header>}>
+      {chartData.length === 0 ? (
+        <Box variant="p" color="text-body-secondary">
+          No data available for this range.
+        </Box>
+      ) : (
+        <BarChart
+          series={chartData}
+          // The domain contains the department names (categories)
+          xDomain={departmentNames}
+          // The yDomain is the percentage (0 to 100)
+          yDomain={[0, 100]}
+          height={300}
+          stackedBars
+          horizontalBars
+          ariaLabel="Department score distribution"
+          xTitle="Department"
+          yTitle="Percentage of Responses"
+          valueFormatter={v => `${v.toFixed(1)}%`}
+          i18nStrings={{
+            filterLabel: 'Data displayed',
+            filterPlaceholder: 'Choose data',
+            detailPopoverDismissAriaLabel: 'Dismiss',
+            legendAriaLabel: 'Legend',
+            chartAriaRoleDescription: 'grouped bar chart'
+          }}
+          detailPopoverContent={e => {
+            const seriesTitle = e.series.series.title;
+            const d = e.datum.data;
+            if (!d) return null;
+            
+            // Look up the full data point from the 'Below Average' series to get total counts
+            const belowData = chartData[0].data.find(pt => pt.x === d.x);
+
+            return (
+              <SpaceBetween size="xxs">
+                <Box fontWeight="bold">{d.x}</Box>
+                <Box color={seriesTitle === 'Below Average' ? 'text-status-error' : 'text-status-success'}>
+                  {seriesTitle}: {d.y.toFixed(1)}% ({seriesTitle === 'Below Average' ? belowData.belowAverageCount : (belowData.totalCount - belowData.belowAverageCount)} responses)
+                </Box>
+                <Box>Total Responses: {belowData.totalCount}</Box>
+              </SpaceBetween>
+            );
+          }}
+        />
+      )}
+    </Container>
+  );
+};
 
 // Primary BarChart with popovers
 const DriverMetricsChart = ({ driverMetrics }) => {
@@ -472,6 +669,7 @@ function transformFirestoreData(firestoreData, metricType) {
 
   // For WHO-5, derive weekly aggregates from anon_surveys if dept_weekly is absent
   let _weekly = Array.isArray(weeklyData) ? [...weeklyData] : []
+  console.log(_weekly)
   if (metricType === 'WHO-5' && (!_weekly || _weekly.length === 0) && Array.isArray(surveys) && surveys.length > 0) {
     const byWeekDept = new Map()
     const byWeek = new Map()
@@ -1151,10 +1349,10 @@ function exportToPdf(data) {
     printWindow.print()
   }
 }
-
+ 
 // ---------------- Page ------------------------------------------------------
 export default function DashboardPage() {
-  const [metricOption, setMetricOption] = useState({ label: 'CG-CAHPS', value: 'CG-CAHPS' })
+  const [metricOption, setMetricOption] = useState({ label: 'WHO-5', value: 'WHO-5' })
   const [departmentFilter, setDepartmentFilter] = useState({ label: 'All Departments', value: 'all' })
   const [range, setRange] = useState({ label: 'All', value: 'cohort-std' })
   
@@ -1337,6 +1535,7 @@ export default function DashboardPage() {
       if (unsubscribe) unsubscribe()
     }
   }, [])
+  
 
   // Handle CG-CAHPS upload
   const handleUploadCgCahps = async () => {
@@ -1530,11 +1729,79 @@ export default function DashboardPage() {
     nearBelowCount
   } = useMemo(() => buildDistribution(residents), [residents])
 
+
+
+  // Add this new calculation inside your main component, alongside other memoized values
+  const overallAvgForRange = useMemo(() => {
+    if (filteredTrend.length === 0) return 0
+    
+    const sum = filteredTrend.reduce((total, point) => total + point.y, 0)
+    const avg = sum / filteredTrend.length
+    
+    return Math.round(avg * 10) / 10 // Keep one-decimal precision
+  }, [filteredTrend])
+
+  // 1. You already have this calculation from the previous step:
+const departmentBelowAverage = useMemo(() => {
+  // ... (Your previous computeDepartmentBelowAverage logic here)
+  const allSurveys = (firestoreData?.surveys || [])
+    .filter(s => s.createdAt)
+    .map(s => ({
+      ...s,
+      score: metricOption.value === 'WHO-5' ? s.score * 4 : s.score // Scale score if needed
+    }));
+  
+  const surveysInRange = filterSurveysByRange(allSurveys, range.value); 
+
+  return computeDepartmentBelowAverage(surveysInRange, overallAvgForRange);
+}, [firestoreData, range.value, overallAvgForRange, metricOption.value]);
+
+
+// 2. NEW: Transform the data for the chart
+const departmentDistributionChartData = useMemo(
+  () => transformDataForBarChart(departmentBelowAverage),
+  [departmentBelowAverage]
+);
+
+
+// 3. NEW: Log the final data structure for verification
+useEffect(() => {
+  console.log('--- Bar Chart Series Data ---');
+  console.log(departmentDistributionChartData);
+}, [departmentDistributionChartData]);
+
   // KPIs reflect filtered range
   const latestWellness = filteredTrend[filteredTrend.length - 1]?.y ?? 0
   const prevWellness = filteredTrend.length >= 2 ? filteredTrend[filteredTrend.length - 2].y : latestWellness
   const wellnessDelta = Math.round(((latestWellness - prevWellness) || 0) * 10) / 10
   const wellnessClass = classifyScore(latestWellness)
+
+  useEffect(() => {
+    if (!active.residents || active.residents.length === 0) return;
+
+    // We must use the raw Firestore data for the filter, not the mock data or the transformed residents list
+    // because the 'residents' list in the mock data doesn't contain the 'createdAt' Date object needed for filtering.
+    // Assuming 'firestoreData.surveys' holds the raw data when using real data.
+    const surveysWithDates = (firestoreData?.surveys || []).filter(s => s.createdAt)
+    
+    // Apply the filter function here to the real data, if available.
+    const filteredResults = filterSurveysByRange(surveysWithDates, range.value);
+
+    // console.log('--- Filtered Survey Results for Range:', range.label, '---');
+    // console.log('Total surveys:', surveysWithDates.length);
+    // console.log('Filtered count:', filteredResults.length);
+    // if (filteredResults.length > 0) {
+    //     const oldest = filteredResults[0].createdAt.toLocaleDateString();
+    //     const newest = filteredResults[filteredResults.length - 1].createdAt.toLocaleDateString();
+    //     console.log(`Date Range: ${oldest} to ${newest}`);
+    // }
+    // console.log(filteredResults);
+    
+    // // You can also log the data being used in your memoized calculations:
+    // console.log('Filtered Trend Data:', filteredTrend);
+    // console.log('Latest Wellness:', latestWellness);
+
+}, [range, firestoreData, filteredTrend, latestWellness]);
 
   // Show loading state
   if (loading) {
@@ -1684,6 +1951,11 @@ export default function DashboardPage() {
                   }
                   status={wellnessClass}
                 />
+                <MetricCard
+                  title="Overall Average"
+                  value={overallAvgForRange}
+                  status={classifyScore(overallAvgForRange)} 
+                />
                 <MetricCard title="Number of Residents" value={residents.length} />
                 {responseRate != null && (
                   <MetricCard title="Response Rate" value={`${responseRate} %`} />
@@ -1700,7 +1972,7 @@ export default function DashboardPage() {
                 </Box>
               </Container>
             )}
-
+            
             {/* Trend (WHO-5 only, filtered by time range) */}
             {caps.trend && (
               <Grid gridDefinition={[{ colspan: { default: 12 } }]}>
@@ -1748,6 +2020,19 @@ export default function DashboardPage() {
                     )
                   })()}
                 </Container>
+              </Grid>
+            )}
+
+            {(caps.heatmap || caps.drivers || caps.distribution) && (
+              <Grid
+                gridDefinition={[
+                  { colspan: { default: 12 } } // Use a single column for the full chart width
+                ]}
+              >
+                {caps.distribution && (
+                  // Include the new chart only if distribution is applicable (WHO-5)
+                  <DepartmentDistributionChart chartData={departmentDistributionChartData} />
+                )}
               </Grid>
             )}
 
