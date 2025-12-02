@@ -2,7 +2,7 @@ import React from 'react'
 import { Button, Form, FormField, Input, SpaceBetween, Alert, Select } from '@cloudscape-design/components'
 import AuthCard from '../components/AuthCard'
 import PasswordField from '../components/PasswordField'
-import { registerResident, getDepartments } from '../lib/api'
+import { registerResident, getDepartments } from '../lib/api.ts'
 import { Link, useNavigate } from 'react-router-dom'
 
 export default function ResidentRegister() {

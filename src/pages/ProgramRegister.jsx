@@ -3,7 +3,7 @@ import { Button, Form, FormField, Input, SpaceBetween, Alert, StatusIndicator, B
 import { Link, useNavigate } from 'react-router-dom'
 import AuthCard from '../components/AuthCard'
 import PasswordField from '../components/PasswordField'
-import { registerProgram, programRegistered } from '../lib/api'
+import { registerProgram, programRegistered } from '../lib/api.ts'
 
 export default function ProgramRegister() {
     const [form, setForm] = React.useState({

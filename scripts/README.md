@@ -111,6 +111,29 @@ node scripts/delete-anon-surveys.js --program=MY-PROG --dry-run
 
 ---
 
+### `seed-program-with-surveys.js`
+Creates a new program seed with a manager, resident roster (per department), and WHO-5 surveys that include `resident_id`, `dayKey`, and `weekKey` so response rates work.
+
+**Usage:**
+```bash
+# Seed a new program with 8 residents/department and 12 surveys each across last 52 weeks
+node scripts/seed-program-with-surveys.js --program=PW-DEMO1 --departments="Emergency,Internal Med,Pediatrics,Surgery" --residents=8 --surveys=12 --weeks=52
+
+# Preview without writing
+node scripts/seed-program-with-surveys.js --dry-run
+```
+
+**What it writes:**
+- `manager_info/{managerId}` with `program_id` + departments
+- `resident_info/{residentId}` docs for each department (cohort size derives from these)
+- `programs/{programId}` (anchor doc with departments)
+- `resident_info/{residentId}/surveys/{dayKey}` docs with `resident_id`, `department`, `dayKey`, `weekKey`, `score`, `createdAt`
+- `programs/{programId}/anon_surveys/{residentId}_{dayKey}` mirror (same fields) to match production submission flow
+
+If your Cloud Function is deployed, those resident surveys will be mirrored into `programs/{programId}/anon_surveys` and `dept_weekly`.
+
+---
+
 ## Quick Reference
 
 ```bash
