@@ -17,12 +17,13 @@ import {
   Alert,
   FileUpload,
   FormField,
-  Tabs
+  Tabs, Checkbox
 } from '@cloudscape-design/components'
 import Brand from '../components/Brand'
 import { getAuth, onAuthStateChanged } from 'firebase/auth'
 import { getFirestore, doc, getDoc, collection, query, where, orderBy, limit, getDocs, setDoc, serverTimestamp } from 'firebase/firestore'
 import CgCahpsDrivers from '../components/CgCahps'
+import {computeResponseRatesByDept, initCohortSizesForProgram} from "../lib/utils.js";
 
 const auth = getAuth()
 const db = getFirestore()
@@ -145,7 +146,7 @@ function classifyScore(score) {
   return { label: 'At-Risk', color: 'error' }
 }
 
-function buildDistribution(residents) {
+function buildDistribution(residents, cohortSizesByDept = {}) {
   // Calculate score range and divide into equal thirds
   const scores = residents.map(r => r.score)
   const minScore = Math.min(...scores, 0)
@@ -184,14 +185,21 @@ function buildDistribution(residents) {
   const segmentAgg = Object.values(segmentMap).map(o => ({
     segment: o.segment,
     numResidents: o.numResidents,
-    respondents: o.respondents,
-    responseRate: o.numResidents ? Math.round((o.respondents / o.numResidents) * 100) : 0,
+    respondents: null,
+    responseRate: null, // intentionally omitted to avoid misleading % against cohort
     avgScore: o.numResidents ? Math.round(o.totalScore / o.numResidents) : 0
   })).sort((a, b) => a.segment.localeCompare(b.segment))
 
   // Department breakdown helper per segment
   function deptBreakdown(list) {
-    const total = list.length || 1
+    const seenDepts = new Set()
+    const totalCohort = list.reduce((sum, r) => {
+      const k = r.dept || 'Unknown'
+      if (seenDepts.has(k)) return sum
+      seenDepts.add(k)
+      const c = Number(cohortSizesByDept[k]) || 0
+      return sum + c
+    }, 0) || list.length || 1
     const m = {}
     list.forEach(r => {
       if (!m[r.dept]) m[r.dept] = { dept: r.dept, numResidents: 0, respondents: 0, sum: 0 }
@@ -202,10 +210,10 @@ function buildDistribution(residents) {
     return Object.values(m)
       .map(d => ({ 
         dept: d.dept, 
-        numResidents: d.numResidents, 
-        respondents: d.respondents,
-        responseRate: d.numResidents ? Math.round((d.respondents / d.numResidents) * 100) : 0,
-        pct: Math.round((d.numResidents / total) * 100), 
+        numResidents: Number(cohortSizesByDept[d.dept]) || d.numResidents,
+        respondents: null,
+        responseRate: null,
+        pct: Math.round(((Number(cohortSizesByDept[d.dept]) || d.numResidents) / totalCohort) * 100),
         avg: Math.round(d.sum / d.numResidents) 
       }))
       .sort((a, b) => a.avg - b.avg)
@@ -402,7 +410,8 @@ const DepartmentDistributionChart = ({ chartData }) => {
         </Box>
       ) : (
         <BarChart
-          series={chartData}
+            hideFilter
+            series={chartData}
           // The domain contains the department names (categories)
           xDomain={departmentNames}
           // The yDomain is the percentage (0 to 100)
@@ -425,7 +434,7 @@ const DepartmentDistributionChart = ({ chartData }) => {
             const seriesTitle = e.series.series.title;
             const d = e.datum.data;
             if (!d) return null;
-            
+
             // Look up the full data point from the 'Below Average' series to get total counts
             const belowData = chartData[0].data.find(pt => pt.x === d.x);
 
@@ -648,44 +657,76 @@ const Heatmap = ({ months, values, departments: depts }) => {
 
 // Helper: transform Firestore data into dashboard format
 function transformFirestoreData(firestoreData, metricType) {
-  console.log('🔄 transformFirestoreData called:', { metricType, surveysCount: firestoreData.surveys?.length })
-  const { surveys, weeklyData, departments: deptList, cgcahpsDrivers } = firestoreData
+  //console.log('🔄 transformFirestoreData called:', { metricType, surveysCount: firestoreData.surveys?.length })
+  const {
+    surveys,
+    weeklyData,
+    departments: deptList,
+    cgcahpsDrivers,
+    cohortSizesByDept,
+    responseRatesByDept
+  } = firestoreData
 
   // Scale WHO-5 raw scores (0-25) to standardized 0-100 range
   const scaleScore = (raw) => metricType === 'WHO-5' ? Math.round(raw * 4) : Math.round(raw)
 
   // Build residents list from surveys (used for WHO-5 distribution)
-  const residents = (surveys || []).map((s, idx) => ({
-    id: idx + 1,
-    dept: s.department,
-    score: scaleScore(s.score || 0),
-    responded: true
-  }))
+  const residents = (() => {
+    const latestByResident = new Map()
+    ;(surveys || []).forEach((s, idx) => {
+      const residentId = s.resident_id || `anon-${idx}`
+      const ts = s.createdAt instanceof Date ? s.createdAt.getTime() : (s.createdAt?.toMillis?.() ?? 0)
+      const prev = latestByResident.get(residentId)
+      if (!prev || ts >= prev._ts) {
+        latestByResident.set(residentId, {
+          id: residentId,
+          dept: s.department,
+          score: scaleScore(s.score || 0),
+          responded: true,
+          _ts: ts
+        })
+      }
+    })
+    return Array.from(latestByResident.values())
+  })()
 
   // Capability flags per metric
   const caps = metricType === 'WHO-5'
     ? { metricType: 'WHO-5', kpis: true, trend: true, heatmap: true, distribution: true, drivers: false }
     : { metricType: 'CG-CAHPS', kpis: false, trend: false, heatmap: false, distribution: false, drivers: true }
 
-  // For WHO-5, derive weekly aggregates from anon_surveys if dept_weekly is absent
+  // For WHO-5, derive weekly aggregates; merge dept_weekly (if present) with survey-derived
   let _weekly = Array.isArray(weeklyData) ? [...weeklyData] : []
-  console.log(_weekly)
-  if (metricType === 'WHO-5' && (!_weekly || _weekly.length === 0) && Array.isArray(surveys) && surveys.length > 0) {
+  if (metricType === 'WHO-5' && Array.isArray(surveys) && surveys.length > 0) {
     const byWeekDept = new Map()
-    const byWeek = new Map()
     const getKey = (wk, dept) => `${wk}__${dept}`
 
+    // Seed with existing weeklyData
+    _weekly.forEach(w => {
+      const wk = w.weekKey
+      const dept = w.department || 'Unknown'
+      const key = getKey(wk, dept)
+      byWeekDept.set(key, {
+        weekKey: wk,
+        department: dept,
+        sum: (Number(w.avg) || 0) * (Number(w.count) || 1),
+        count: Number(w.count) || 1
+      })
+    })
+
+    // Derive from surveys (ensures full historical coverage)
+    //let iterations = 0
     surveys.forEach(s => {
+
+      //iterations += 1
       const wk = s.weekKey || (s.createdAt ? deriveIsoWeekKey(s.createdAt) : 'unknown')
       const dept = s.department || 'Unknown'
       const score = scaleScore(Number(s.score) || 0)
-
-      const ovr = byWeek.get(wk) || { sum: 0, count: 0 }
-      ovr.sum += score; ovr.count += 1; byWeek.set(wk, ovr)
-
       const key = getKey(wk, dept)
       const cur = byWeekDept.get(key) || { weekKey: wk, department: dept, sum: 0, count: 0 }
-      cur.sum += score; cur.count += 1; byWeekDept.set(key, cur)
+      cur.sum += score
+      cur.count += 1
+      byWeekDept.set(key, cur)
     })
 
     _weekly = Array.from(byWeekDept.values()).map(v => ({
@@ -695,30 +736,53 @@ function transformFirestoreData(firestoreData, metricType) {
       count: v.count
     }))
   }
-
+  //console.log("WEEKLY:", _weekly)
   // Trend (WHO-5 only)
   let trend = []
   if (caps.trend) {
-    // Build overall weekly trend across departments
-    const byWeekOverall = new Map()
+    // Build weekly trends per department and overall (for filtering)
+    const trendAgg = new Map() // dept -> Map(weekKey -> { sum, count })
+    const addPoint = (dept, weekKey, value, count) => {
+      //console.log("Adding point", {dept, weekKey, value, count})
+      const deptMap = trendAgg.get(dept) || new Map()
+      const cur = deptMap.get(weekKey) || { sum: 0, count: 0 }
+      cur.sum += value * count
+      cur.count += count
+      deptMap.set(weekKey, cur)
+      trendAgg.set(dept, deptMap)
+    }
+
     _weekly.forEach(w => {
-      const o = byWeekOverall.get(w.weekKey) || { sum: 0, count: 0 }
       // If weekly data came from dept_weekly (pre-aggregated), scale avg; if derived above, already scaled
       const avgScaled = (weeklyData && weeklyData.length > 0) ? scaleScore(Number(w.avg || 0)) : Number(w.avg || 0)
-      o.sum += avgScaled * (Number(w.count) || 1)
-      o.count += Number(w.count) || 1
-      byWeekOverall.set(w.weekKey, o)
+      const count = Number(w.count) || 1
+      const deptKey = w.department || 'Unknown'
+      addPoint(deptKey, w.weekKey, avgScaled, count)
+      addPoint('all', w.weekKey, avgScaled, count)
     })
-    const weeksSorted = Array.from(byWeekOverall.keys()).sort()
-    const useWeeks = weeksSorted // don't pre-slice; allow UI presets to filter
-    trend = useWeeks.map(wk => {
-      const o = byWeekOverall.get(wk)
-      const avg = o.count ? (o.sum / o.count) : 0
-      // keep one-decimal precision to avoid zeroing small changes
-      return { x: wk, y: Math.round(avg * 10) / 10 }
-    })
+    //console.log("Trend Agg:" , trendAgg)
+    const buildTrend = (deptKey) => {
+      const m = deptKey && trendAgg.get(deptKey)
+      if (!m) return []
+      const weeksSorted = Array.from(m.keys()).sort()
+      // keep full history; slicing happens later based on selected time range
+      return weeksSorted.map(wk => {
+        const o = m.get(wk)
+        const avg = o.count ? (o.sum / o.count) : 0
+        return { x: wk, y: Math.round(avg * 10) / 10, department: deptKey, dept: deptKey }
+      })
+    }
 
+    // Overall trend first, then department-specific trends for filtering
+    trend = buildTrend('all')
+    Array.from(trendAgg.keys())
+      .filter(k => k !== 'all')
+      .forEach(k => {
+        trend = trend.concat(buildTrend(k))
+      })
     // Compute segment-specific deltas using last two weeks
+    const byWeekOverall = trendAgg.get('all') || new Map()
+    const weeksSorted = Array.from(byWeekOverall.keys()).sort()
     const lastTwo = weeksSorted.slice(-2)
     let segmentDeltas = null
     if (lastTwo.length === 2) {
@@ -814,6 +878,9 @@ function transformFirestoreData(firestoreData, metricType) {
     heatmapDepts,
     heatmapValues,
     responseRate,
+    responseRatesByDept,
+    cohortSizesByDept,
+    surveys,
     totalSurveys: surveys?.length || 0,
     segmentDeltas: (caps.trend && trend && trend._segmentDeltas) ? trend._segmentDeltas : null
   }
@@ -866,7 +933,23 @@ function computeSliceWindow(rangeValue, total) {
     'custom': total
   }
   const cnt = Math.max(1, Math.min(total, countMap[rangeValue] ?? total))
+  //console.log("Computing slice window", { rangeValue, total, cnt })
+
   return { start: Math.max(0, total - cnt), end: total }
+}
+
+// Best-effort cache of fetched surveys to avoid repeated reads
+function cacheSurveys(programId, surveys) {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem('prevworks_surveys_cache', JSON.stringify({
+      programId,
+      savedAt: new Date().toISOString(),
+      surveys
+    }))
+  } catch (err) {
+    console.warn('Unable to cache surveys', err)
+  }
 }
 
 // Helper: parse CG-CAHPS CSV
@@ -1349,13 +1432,14 @@ function exportToPdf(data) {
     printWindow.print()
   }
 }
- 
+
 // ---------------- Page ------------------------------------------------------
 export default function DashboardPage() {
   const [metricOption, setMetricOption] = useState({ label: 'WHO-5', value: 'WHO-5' })
   const [departmentFilter, setDepartmentFilter] = useState({ label: 'All Departments', value: 'all' })
+  const [preset, setPreset] = React.useState('all')
   const [range, setRange] = useState({ label: 'All', value: 'cohort-std' })
-  
+
   // Auth & Firestore state
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -1429,6 +1513,17 @@ export default function DashboardPage() {
         }))
         console.log(`📊 Loaded ${surveys.length} surveys from programs/${manageProgramId}/anon_surveys`)
 
+        const cohortSizesByDept = await initCohortSizesForProgram(manageProgramId)
+        const responseRatesByDept = computeResponseRatesByDept(
+            surveys,
+            cohortSizesByDept,
+            {
+              // or derive these from your preset/date filter
+              // startDayKey: '2025-11-01',
+              // endDayKey: '2025-11-18',
+            }
+        )
+        console.log("response rate by dept", responseRatesByDept)
         // Query weekly aggregates
         const weeklyQuery = query(
           collection(db, `programs/${manageProgramId}/dept_weekly`),
@@ -1515,8 +1610,11 @@ export default function DashboardPage() {
           weeklyData,
           programId: manageProgramId,
           departments: managerData.departments || [],
-          cgcahpsDrivers
+          cgcahpsDrivers,
+          cohortSizesByDept,
+          responseRatesByDept
         })
+        cacheSurveys(manageProgramId, surveys)
         
         setUseMockData(false)
         setLoading(false)
@@ -1535,7 +1633,7 @@ export default function DashboardPage() {
       if (unsubscribe) unsubscribe()
     }
   }, [])
-  
+
 
   // Handle CG-CAHPS upload
   const handleUploadCgCahps = async () => {
@@ -1584,7 +1682,7 @@ export default function DashboardPage() {
       kpis: caps.kpis ? {
         latestWellness,
         wellnessDelta,
-        numResidents: residents.length,
+        numResidents,
         responseRate
       } : null,
       trend: filteredTrend,
@@ -1613,7 +1711,7 @@ export default function DashboardPage() {
       kpis: caps.kpis ? {
         latestWellness,
         wellnessDelta,
-        numResidents: residents.length,
+        numResidents,
         responseRate
       } : null,
       trend: filteredTrend,
@@ -1660,11 +1758,18 @@ export default function DashboardPage() {
     ]
   }, [allResidents])
   
-  // Get response rate from active source
-  const responseRate = (caps.kpis && active.responseRate != null)
-    ? String(active.responseRate)
-    : null
-  
+  // Use cohort sizes when available; fall back to resident list length
+  const numResidents = useMemo(() => {
+    const map = active.cohortSizesByDept
+    if (map && typeof map === 'object') {
+      if (departmentFilter.value === 'all') {
+        return Object.values(map).reduce((sum, n) => sum + (Number(n) || 0), 0)
+      }
+      return Number(map[departmentFilter.value]) || 0
+    }
+    return residents.length
+  }, [active.cohortSizesByDept, departmentFilter.value, residents.length])
+
   // Get heatmap data from active source (Firestore or mock)
   const heatmapMonths = (useMockData || !firestoreData) ? (metricOption.value === 'WHO-5' ? months : []) : (active.heatmapMonths || [])
     const allHeatmapDepts = (useMockData || !firestoreData) ? (metricOption.value === 'WHO-5' ? departments : []) : (active.heatmapDepts || [])
@@ -1685,12 +1790,76 @@ export default function DashboardPage() {
       }
     }, [departmentFilter.value, allHeatmapDepts, allHeatmapVals])
 
+  // Apply department filter before slicing trend/time range
+  const deptFilteredTrend = useMemo(() => {
+    //console.log("Applying department filter to trend:", departmentFilter.value, wellnessTrend.length, wellnessTrend)
+    if (departmentFilter.value === 'all') {
+      return wellnessTrend.filter(p =>
+        (p.department === 'all' || p.dept === 'all' || (!p.department && !p.dept))
+      )
+    }
+    return wellnessTrend.filter(p => p.department === departmentFilter.value || p.dept === departmentFilter.value)
+  }, [departmentFilter.value, wellnessTrend])
+
   // Apply time range to trend and heatmap columns
-  const trendWindow = computeSliceWindow(range.value, wellnessTrend.length || 0)
-  const filteredTrend = useMemo(
-    () => wellnessTrend.slice(trendWindow.start, trendWindow.end),
-    [wellnessTrend, trendWindow.start, trendWindow.end]
+  const trendWindow = useMemo(
+    () => computeSliceWindow(range.value, deptFilteredTrend.length || 0),
+    [range.value, deptFilteredTrend.length]
   )
+  const filteredTrend = useMemo(
+    () => deptFilteredTrend.slice(trendWindow.start, trendWindow.end),
+    [deptFilteredTrend, trendWindow.start, trendWindow.end]
+  )
+
+  // Get response rate from active source (precomputed if available)
+  const responseRate = useMemo(() => {
+    if (!caps.kpis) return null
+
+    const deptKey = departmentFilter.value
+
+    // Prefer precomputed map from Firestore
+    const fromMap = active.responseRatesByDept
+    if (fromMap) {
+      if (deptKey === 'all') {
+        const stats = Object.values(fromMap)
+        if (stats.length === 0) return null
+        const totalResponded = stats.reduce((sum, s) => sum + (s?.numResponded || 0), 0)
+        const totalCohort = stats.reduce((sum, s) => sum + (s?.cohortSize || 0), 0)
+        if (totalCohort === 0) return null
+        return (totalResponded / totalCohort) * 100
+      }
+      const stat = fromMap[deptKey]
+      if (stat && stat.responseRate != null) return stat.responseRate
+    }
+
+    // Fallback to any aggregate provided on the active metric
+    if (active.responseRate != null) return Number(active.responseRate)
+
+    // Fallback compute from surveys + cohort sizes limited to visible trend range
+    const surveys = active.surveys
+    const cohortSizesByDept = active.cohortSizesByDept
+    if (!surveys || !cohortSizesByDept) return null
+
+    const cohortSize = deptKey === 'all'
+      ? Object.values(cohortSizesByDept).reduce((sum, n) => sum + (Number(n) || 0), 0)
+      : (Number(cohortSizesByDept[deptKey]) || 0)
+    if (cohortSize === 0) return null
+
+    const visibleDays = new Set(filteredTrend.map(p => String(p.x)))
+    const uniqueResidentIds = new Set()
+
+    for (const s of surveys) {
+      if (deptKey !== 'all' && s.department !== deptKey) continue
+      if (!s.dayKey || !visibleDays.has(String(s.dayKey))) continue
+      if (!s.resident_id) continue
+      uniqueResidentIds.add(String(s.resident_id))
+    }
+
+    if (uniqueResidentIds.size === 0) return 0
+
+    return (uniqueResidentIds.size / cohortSize) * 100
+  }, [caps.kpis, departmentFilter.value, active.responseRatesByDept, active.responseRate, active.surveys, active.cohortSizesByDept, filteredTrend])
+  const responseRateDisplay = responseRate != null ? responseRate.toFixed(1) : null
 
   // Derive readable start/end dates from ISO week keys for caption
   const trendDateRange = useMemo(() => {
@@ -1727,17 +1896,17 @@ export default function DashboardPage() {
     nearAboveCount,
     nearAvgCount,
     nearBelowCount
-  } = useMemo(() => buildDistribution(residents), [residents])
+  } = useMemo(() => buildDistribution(residents, active.cohortSizesByDept || {}), [residents, active.cohortSizesByDept])
 
 
 
   // Add this new calculation inside your main component, alongside other memoized values
   const overallAvgForRange = useMemo(() => {
     if (filteredTrend.length === 0) return 0
-    
+
     const sum = filteredTrend.reduce((total, point) => total + point.y, 0)
     const avg = sum / filteredTrend.length
-    
+
     return Math.round(avg * 10) / 10 // Keep one-decimal precision
   }, [filteredTrend])
 
@@ -1750,8 +1919,8 @@ const departmentBelowAverage = useMemo(() => {
       ...s,
       score: metricOption.value === 'WHO-5' ? s.score * 4 : s.score // Scale score if needed
     }));
-  
-  const surveysInRange = filterSurveysByRange(allSurveys, range.value); 
+
+  const surveysInRange = filterSurveysByRange(allSurveys, range.value);
 
   return computeDepartmentBelowAverage(surveysInRange, overallAvgForRange);
 }, [firestoreData, range.value, overallAvgForRange, metricOption.value]);
@@ -1783,7 +1952,7 @@ useEffect(() => {
     // because the 'residents' list in the mock data doesn't contain the 'createdAt' Date object needed for filtering.
     // Assuming 'firestoreData.surveys' holds the raw data when using real data.
     const surveysWithDates = (firestoreData?.surveys || []).filter(s => s.createdAt)
-    
+
     // Apply the filter function here to the real data, if available.
     const filteredResults = filterSurveysByRange(surveysWithDates, range.value);
 
@@ -1796,7 +1965,7 @@ useEffect(() => {
     //     console.log(`Date Range: ${oldest} to ${newest}`);
     // }
     // console.log(filteredResults);
-    
+
     // // You can also log the data being used in your memoized calculations:
     // console.log('Filtered Trend Data:', filteredTrend);
     // console.log('Latest Wellness:', latestWellness);
@@ -1934,9 +2103,10 @@ useEffect(() => {
             {caps.kpis && (
               <Grid
                 gridDefinition={[
-                  { colspan: { default: 12, s: 4 } },
-                  { colspan: { default: 12, s: 4 } },
-                  { colspan: { default: 12, s: 4 } }
+                  { colspan: { default: 12, s: 3, l: 3 } },
+                  { colspan: { default: 12, s: 3, l: 3 } },
+                  { colspan: { default: 12, s: 3, l: 3 } },
+                  { colspan: { default: 12, s: 3, l: 3 } }
                 ]}
               >
                 <MetricCard
@@ -1952,14 +2122,15 @@ useEffect(() => {
                   status={wellnessClass}
                 />
                 <MetricCard
-                  title="Overall Average"
-                  value={overallAvgForRange}
-                  status={classifyScore(overallAvgForRange)} 
+                    title="Overall Average"
+                    value={overallAvgForRange}
+                    status={classifyScore(overallAvgForRange)}
                 />
-                <MetricCard title="Number of Residents" value={residents.length} />
-                {responseRate != null && (
-                  <MetricCard title="Response Rate" value={`${responseRate} %`} />
+                <MetricCard title="Number of Residents" value={numResidents} />
+                {responseRateDisplay != null && (
+                  <MetricCard title="Response Rate" value={`${responseRateDisplay}%`} />
                 )}
+
               </Grid>
             )}
 
@@ -1972,7 +2143,7 @@ useEffect(() => {
                 </Box>
               </Container>
             )}
-            
+
             {/* Trend (WHO-5 only, filtered by time range) */}
             {caps.trend && (
               <Grid gridDefinition={[{ colspan: { default: 12 } }]}>
@@ -1997,6 +2168,7 @@ useEffect(() => {
                     }
                     return (
                       <LineChart
+                          hideFilter
                         xScaleType="time"
                         series={[{ title: metricOption.label, type: 'line', data: timeSeries }]}
                         yDomain={[0, 100]}
@@ -2036,12 +2208,12 @@ useEffect(() => {
               </Grid>
             )}
 
-            {/* Heatmap and/or compact driver bars */}
-            {(caps.heatmap || caps.drivers) && (
-              <Grid
-                gridDefinition={
-                  caps.heatmap && caps.drivers
-                    ? [{ colspan: { default: 12, s: 6 } }, { colspan: { default: 12, s: 6 } }]
+                      {/* Heatmap and/or compact driver bars */}
+                      {(caps.heatmap || caps.drivers) && (
+                          <Grid
+                              gridDefinition={
+                                caps.heatmap && caps.drivers
+                                    ? [{colspan: { default: 12, s: 6 } }, { colspan: { default: 12, s: 6 } }]
                     : [{ colspan: { default: 12 } }]
                 }
               >
@@ -2220,14 +2392,6 @@ const DistributionSection = ({
           <Box>{data.numResidents}</Box>
         </Box>
         <Box>
-          <Box variant="awsui-key-label">Respondents</Box>
-          <Box>{data.respondents}</Box>
-        </Box>
-        <Box>
-          <Box variant="awsui-key-label">Response rate</Box>
-          <Box>{data.responseRate}%</Box>
-        </Box>
-        <Box>
           <Box variant="awsui-key-label">Avg score</Box>
           <Box>{data.avgScore}</Box>
         </Box>
@@ -2267,8 +2431,6 @@ const DistributionSection = ({
           columnDefinitions={[
             { id: 'dept', header: 'Department', cell: i => i.dept },
             { id: 'numResidents', header: 'Number of Residents', cell: i => i.numResidents },
-            { id: 'respondents', header: 'Respondents', cell: i => i.respondents },
-            { id: 'responseRate', header: 'Response Rate', cell: i => i.responseRate + '%' },
             { id: 'pct', header: '% of Below Avg', cell: i => i.pct + '%' },
             { id: 'avg', header: 'Avg Score', cell: i => i.avg }
           ]}
@@ -2285,7 +2447,6 @@ const DistributionSection = ({
             columnDefinitions={[
               { id: 'dept', header: 'Department', cell: i => i.dept },
               { id: 'numResidents', header: 'Number of Residents', cell: i => i.numResidents },
-              { id: 'responseRate', header: 'Response Rate', cell: i => i.responseRate + '%' },
               { id: 'avg', header: 'Avg Score', cell: i => i.avg }
             ]}
             variant="embedded"
@@ -2298,7 +2459,6 @@ const DistributionSection = ({
             columnDefinitions={[
               { id: 'dept', header: 'Department', cell: i => i.dept },
               { id: 'numResidents', header: 'Number of Residents', cell: i => i.numResidents },
-              { id: 'responseRate', header: 'Response Rate', cell: i => i.responseRate + '%' },
               { id: 'avg', header: 'Avg Score', cell: i => i.avg }
             ]}
             variant="embedded"
