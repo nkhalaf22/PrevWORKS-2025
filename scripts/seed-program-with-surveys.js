@@ -15,7 +15,7 @@
  */
 
 import { initializeApp } from 'firebase/app'
-import { getFirestore, doc, setDoc, writeBatch, Timestamp } from 'firebase/firestore'
+import { getFirestore, doc, setDoc, writeBatch, Timestamp, connectFirestoreEmulator } from 'firebase/firestore'
 import { config as loadEnv } from 'dotenv'
 import fs from 'fs'
 import path from 'path'
@@ -66,6 +66,11 @@ if (!firebaseConfig.projectId) {
 
 const app = initializeApp(firebaseConfig)
 const db = getFirestore(app)
+if (process.env.FIRESTORE_EMULATOR_HOST) {
+  const [host, port] = process.env.FIRESTORE_EMULATOR_HOST.split(':')
+  connectFirestoreEmulator(db, host, Number(port) || 8080)
+  console.log(`Using Firestore emulator at ${host}:${port || 8080}`)
+}
 
 // ----------- Helpers -------------------------------------------------------
 function randId(prefix = '') {

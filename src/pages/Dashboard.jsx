@@ -410,7 +410,8 @@ const DepartmentDistributionChart = ({ chartData }) => {
         </Box>
       ) : (
         <BarChart
-          series={chartData}
+            hideFilter
+            series={chartData}
           // The domain contains the department names (categories)
           xDomain={departmentNames}
           // The yDomain is the percentage (0 to 100)
@@ -656,7 +657,7 @@ const Heatmap = ({ months, values, departments: depts }) => {
 
 // Helper: transform Firestore data into dashboard format
 function transformFirestoreData(firestoreData, metricType) {
-  console.log('🔄 transformFirestoreData called:', { metricType, surveysCount: firestoreData.surveys?.length })
+  //console.log('🔄 transformFirestoreData called:', { metricType, surveysCount: firestoreData.surveys?.length })
   const {
     surveys,
     weeklyData,
@@ -694,25 +695,38 @@ function transformFirestoreData(firestoreData, metricType) {
     ? { metricType: 'WHO-5', kpis: true, trend: true, heatmap: true, distribution: true, drivers: false }
     : { metricType: 'CG-CAHPS', kpis: false, trend: false, heatmap: false, distribution: false, drivers: true }
 
-  // For WHO-5, derive weekly aggregates from anon_surveys if dept_weekly is absent
+  // For WHO-5, derive weekly aggregates; merge dept_weekly (if present) with survey-derived
   let _weekly = Array.isArray(weeklyData) ? [...weeklyData] : []
-  console.log(_weekly)
-  if (metricType === 'WHO-5' && (!_weekly || _weekly.length === 0) && Array.isArray(surveys) && surveys.length > 0) {
+  if (metricType === 'WHO-5' && Array.isArray(surveys) && surveys.length > 0) {
     const byWeekDept = new Map()
-    const byWeek = new Map()
     const getKey = (wk, dept) => `${wk}__${dept}`
 
+    // Seed with existing weeklyData
+    _weekly.forEach(w => {
+      const wk = w.weekKey
+      const dept = w.department || 'Unknown'
+      const key = getKey(wk, dept)
+      byWeekDept.set(key, {
+        weekKey: wk,
+        department: dept,
+        sum: (Number(w.avg) || 0) * (Number(w.count) || 1),
+        count: Number(w.count) || 1
+      })
+    })
+
+    // Derive from surveys (ensures full historical coverage)
+    //let iterations = 0
     surveys.forEach(s => {
+
+      //iterations += 1
       const wk = s.weekKey || (s.createdAt ? deriveIsoWeekKey(s.createdAt) : 'unknown')
       const dept = s.department || 'Unknown'
       const score = scaleScore(Number(s.score) || 0)
-
-      const ovr = byWeek.get(wk) || { sum: 0, count: 0 }
-      ovr.sum += score; ovr.count += 1; byWeek.set(wk, ovr)
-
       const key = getKey(wk, dept)
       const cur = byWeekDept.get(key) || { weekKey: wk, department: dept, sum: 0, count: 0 }
-      cur.sum += score; cur.count += 1; byWeekDept.set(key, cur)
+      cur.sum += score
+      cur.count += 1
+      byWeekDept.set(key, cur)
     })
 
     _weekly = Array.from(byWeekDept.values()).map(v => ({
@@ -722,13 +736,14 @@ function transformFirestoreData(firestoreData, metricType) {
       count: v.count
     }))
   }
-
+  //console.log("WEEKLY:", _weekly)
   // Trend (WHO-5 only)
   let trend = []
   if (caps.trend) {
     // Build weekly trends per department and overall (for filtering)
     const trendAgg = new Map() // dept -> Map(weekKey -> { sum, count })
     const addPoint = (dept, weekKey, value, count) => {
+      //console.log("Adding point", {dept, weekKey, value, count})
       const deptMap = trendAgg.get(dept) || new Map()
       const cur = deptMap.get(weekKey) || { sum: 0, count: 0 }
       cur.sum += value * count
@@ -745,6 +760,7 @@ function transformFirestoreData(firestoreData, metricType) {
       addPoint(deptKey, w.weekKey, avgScaled, count)
       addPoint('all', w.weekKey, avgScaled, count)
     })
+    //console.log("Trend Agg:" , trendAgg)
     const buildTrend = (deptKey) => {
       const m = deptKey && trendAgg.get(deptKey)
       if (!m) return []
@@ -764,15 +780,6 @@ function transformFirestoreData(firestoreData, metricType) {
       .forEach(k => {
         trend = trend.concat(buildTrend(k))
       })
-    const weeksSorted = Array.from(byWeekOverall.keys()).sort()
-    const useWeeks = weeksSorted // don't pre-slice; allow UI presets to filter
-    trend = useWeeks.map(wk => {
-      const o = byWeekOverall.get(wk)
-      const avg = o.count ? (o.sum / o.count) : 0
-      // keep one-decimal precision to avoid zeroing small changes
-      return { x: wk, y: Math.round(avg * 10) / 10 }
-    })
-
     // Compute segment-specific deltas using last two weeks
     const byWeekOverall = trendAgg.get('all') || new Map()
     const weeksSorted = Array.from(byWeekOverall.keys()).sort()
@@ -926,7 +933,23 @@ function computeSliceWindow(rangeValue, total) {
     'custom': total
   }
   const cnt = Math.max(1, Math.min(total, countMap[rangeValue] ?? total))
+  //console.log("Computing slice window", { rangeValue, total, cnt })
+
   return { start: Math.max(0, total - cnt), end: total }
+}
+
+// Best-effort cache of fetched surveys to avoid repeated reads
+function cacheSurveys(programId, surveys) {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem('prevworks_surveys_cache', JSON.stringify({
+      programId,
+      savedAt: new Date().toISOString(),
+      surveys
+    }))
+  } catch (err) {
+    console.warn('Unable to cache surveys', err)
+  }
 }
 
 // Helper: parse CG-CAHPS CSV
@@ -1591,6 +1614,7 @@ export default function DashboardPage() {
           cohortSizesByDept,
           responseRatesByDept
         })
+        cacheSurveys(manageProgramId, surveys)
         
         setUseMockData(false)
         setLoading(false)
@@ -1768,6 +1792,7 @@ export default function DashboardPage() {
 
   // Apply department filter before slicing trend/time range
   const deptFilteredTrend = useMemo(() => {
+    //console.log("Applying department filter to trend:", departmentFilter.value, wellnessTrend.length, wellnessTrend)
     if (departmentFilter.value === 'all') {
       return wellnessTrend.filter(p =>
         (p.department === 'all' || p.dept === 'all' || (!p.department && !p.dept))
@@ -2078,9 +2103,10 @@ useEffect(() => {
             {caps.kpis && (
               <Grid
                 gridDefinition={[
-                  { colspan: { default: 12, s: 4 } },
-                  { colspan: { default: 12, s: 4 } },
-                  { colspan: { default: 12, s: 4 } }
+                  { colspan: { default: 12, s: 3, l: 3 } },
+                  { colspan: { default: 12, s: 3, l: 3 } },
+                  { colspan: { default: 12, s: 3, l: 3 } },
+                  { colspan: { default: 12, s: 3, l: 3 } }
                 ]}
               >
                 <MetricCard
@@ -2095,14 +2121,15 @@ useEffect(() => {
                   }
                   status={wellnessClass}
                 />
-                  <MetricCard
-                      title="Overall Average"
-                      value={overallAvgForRange}
-                      status={classifyScore(overallAvgForRange)}
-                  />
+                <MetricCard
+                    title="Overall Average"
+                    value={overallAvgForRange}
+                    status={classifyScore(overallAvgForRange)}
+                />
                 <MetricCard title="Number of Residents" value={numResidents} />
                 {responseRateDisplay != null && (
-                  <MetricCard title="Response Rate" value={`${responseRateDisplay}%`} />)}
+                  <MetricCard title="Response Rate" value={`${responseRateDisplay}%`} />
+                )}
 
               </Grid>
             )}
@@ -2141,6 +2168,7 @@ useEffect(() => {
                     }
                     return (
                       <LineChart
+                          hideFilter
                         xScaleType="time"
                         series={[{ title: metricOption.label, type: 'line', data: timeSeries }]}
                         yDomain={[0, 100]}
