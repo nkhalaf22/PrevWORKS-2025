@@ -20,7 +20,8 @@
     "delete-surveys": "node scripts/delete-anon-surveys.js",
     "delete-surveys:dry": "node scripts/delete-anon-surveys.js --dry-run",
     "delete-surveys:who5": "node scripts/delete-anon-surveys.js --who5-only",
-    "delete-surveys:cgcahps": "node scripts/delete-anon-surveys.js --cgcahps-only"
+    "delete-surveys:cgcahps": "node scripts/delete-anon-surveys.js --cgcahps-only",
+    "seed-residents": "node scripts/seed-program-with-surveys.js"
   },
   "dependencies": {
     "@cloudscape-design/components": "^3.0.1096",

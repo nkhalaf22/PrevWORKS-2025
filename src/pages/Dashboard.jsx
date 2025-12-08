@@ -1617,7 +1617,7 @@ export default function DashboardPage() {
         const surveysQuery = query(
           collection(db, `programs/${manageProgramId}/anon_surveys`),
           orderBy('createdAt', 'desc'),
-          limit(500)
+          limit(10000)
         )
         
         const surveysSnap = await getDocs(surveysQuery)
@@ -1981,46 +1981,27 @@ export default function DashboardPage() {
 
     const deptKey = departmentFilter.value
 
-    const cohortSizesByDept = active.cohortSizesByDept || {}
-    const totalCohort = Object.values(cohortSizesByDept).reduce((sum, n) => sum + (Number(n) || 0), 0)
+    const surveys = active.surveys
+    const cohortSizesByDept = active.cohortSizesByDept
+    if (!surveys || !cohortSizesByDept) return null
+
     const cohortSize = deptKey === 'all'
-      ? totalCohort
+      ? Object.values(cohortSizesByDept).reduce((sum, n) => sum + (Number(n) || 0), 0)
       : (Number(cohortSizesByDept[deptKey]) || 0)
+    if (cohortSize === 0) return null
 
-    const clampPct = (value) => Math.max(0, Math.min(100, value))
+    const visibleWeeks = new Set(filteredTrend.map(p => String(p.x)))
+    const uniqueResidentIds = new Set()
 
-    if (cohortSize > 0 && surveysForResponseRate.length > 0) {
-      const uniqueResidentIds = new Set(
-        surveysForResponseRate
-          .filter(s => deptKey === 'all' || s.department === deptKey)
-          .map(s => s.resident_id)
-          .filter(Boolean)
-      )
-      if (uniqueResidentIds.size > 0) {
-        return clampPct((uniqueResidentIds.size / cohortSize) * 100)
-      }
-      return 0
+    for (const s of surveys) {
+      if (deptKey !== 'all' && s.department !== deptKey) continue
+      const wk = s.weekKey || (s.dayKey ? deriveIsoWeekKey(new Date(s.dayKey)) : null)
+      if (!wk || !visibleWeeks.has(String(wk))) continue
+      if (!s.resident_id) continue
+      uniqueResidentIds.add(String(s.resident_id))
     }
 
-    // Prefer precomputed map from Firestore (clamped)
-    const fromMap = active.responseRatesByDept
-    if (fromMap) {
-      if (deptKey === 'all') {
-        const stats = Object.values(fromMap)
-        if (stats.length === 0) return null
-        const totalResponded = stats.reduce((sum, s) => sum + (s?.numResponded || 0), 0)
-        const totalCohortFromMap = stats.reduce((sum, s) => sum + (s?.cohortSize || 0), 0)
-        if (totalCohortFromMap === 0) return null
-        return clampPct((totalResponded / totalCohortFromMap) * 100)
-      }
-      const stat = fromMap[deptKey]
-      if (stat && stat.responseRate != null) return clampPct(stat.responseRate)
-    }
-
-    // Fallback to any aggregate provided on the active metric
-    if (active.responseRate != null) return clampPct(Number(active.responseRate))
-    return null
-  }, [caps.kpis, departmentFilter.value, active.cohortSizesByDept, surveysForResponseRate, active.responseRatesByDept, active.responseRate])
+    if (uniqueResidentIds.size === 0) return 0
 
   const responseRate = computedResponseRate
   const responseRateDisplay = responseRate != null ? Number(responseRate).toFixed(1) : null
