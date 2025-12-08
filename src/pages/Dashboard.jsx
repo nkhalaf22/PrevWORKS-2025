@@ -1986,8 +1986,8 @@ export default function DashboardPage() {
     if (!surveys || !cohortSizesByDept) return null
 
     const cohortSize = deptKey === 'all'
-      ? Object.values(cohortSizesByDept).reduce((sum, n) => sum + (Number(n) || 0), 0)
-      : (Number(cohortSizesByDept[deptKey]) || 0)
+        ? Object.values(cohortSizesByDept).reduce((sum, n) => sum + (Number(n) || 0), 0)
+        : (Number(cohortSizesByDept[deptKey]) || 0)
     if (cohortSize === 0) return null
 
     const visibleWeeks = new Set(filteredTrend.map(p => String(p.x)))
@@ -2003,40 +2003,552 @@ export default function DashboardPage() {
 
     if (uniqueResidentIds.size === 0) return 0
 
-  const responseRate = computedResponseRate
-  const responseRateDisplay = responseRate != null ? Number(responseRate).toFixed(1) : null
+    const responseRate = computedResponseRate
+    const responseRateDisplay = responseRate != null ? Number(responseRate).toFixed(1) : null
 
-  // Derive readable start/end dates from ISO week keys for caption
-  const trendDateRange = useMemo(() => {
-    if (!caps.trend || !filteredTrend || filteredTrend.length === 0) return null
-    try {
-      const startWk = filteredTrend[0].x
-      const endWk = filteredTrend[filteredTrend.length - 1].x
-      const start = isoWeekKeyToDate(startWk)
-      const end = isoWeekKeyToDate(endWk)
-      end.setDate(end.getDate() + 6) // end of the ISO week
-      return { start, end }
-    } catch {
-      return null
+    // Derive readable start/end dates from ISO week keys for caption
+    const trendDateRange = useMemo(() => {
+      if (!caps.trend || !filteredTrend || filteredTrend.length === 0) return null
+      try {
+        const startWk = filteredTrend[0].x
+        const endWk = filteredTrend[filteredTrend.length - 1].x
+        const start = isoWeekKeyToDate(startWk)
+        const end = isoWeekKeyToDate(endWk)
+        end.setDate(end.getDate() + 6) // end of the ISO week
+        return {start, end}
+      } catch {
+        return null
+      }
+    }, [caps.trend, filteredTrend])
+
+    const monthsWindow = computeSliceWindow(range.value, heatmapMonths.length || 0)
+    const filteredWeekKeys = useMemo(
+        () => heatmapMonths.slice(monthsWindow.start, monthsWindow.end),
+        [heatmapMonths, monthsWindow.start, monthsWindow.end]
+    )
+    const filteredMonths = useMemo(
+        () => filteredWeekKeys.map(formatWeekRangeLabel),
+        [filteredWeekKeys]
+    )
+    const filteredHeatmapValues = useMemo(
+        () => heatmapVals.map(row => row.slice(monthsWindow.start, monthsWindow.end)),
+        [heatmapVals, monthsWindow.start, monthsWindow.end]
+    )
+
+    // Distribution (unchanged, resident data has no time stamps in mock)
+    const {
+      avgWellness,
+      segmentAgg,
+      aboveDeptBreakdown,
+      avgDeptBreakdown,
+      belowAvgDeptBreakdown,
+      nearAboveCount,
+      nearAvgCount,
+      nearBelowCount
+    } = useMemo(() => buildDistribution(residents, active.cohortSizesByDept || {}), [residents, active.cohortSizesByDept])
+
+
+    // Add this new calculation inside your main component, alongside other memoized values
+    const overallAvgForRange = useMemo(() => {
+      if (filteredTrend.length === 0) return 0
+
+      const sum = filteredTrend.reduce((total, point) => total + point.y, 0)
+      const avg = sum / filteredTrend.length
+
+      return Math.round(avg * 10) / 10 // Keep one-decimal precision
+    }, [filteredTrend])
+
+    // 1. You already have this calculation from the previous step:
+    const departmentBelowAverage = useMemo(() => {
+      // ... (Your previous computeDepartmentBelowAverage logic here)
+      const allSurveys = (firestoreData?.surveys || [])
+          .filter(s => s.createdAt)
+          .map(s => ({
+            ...s,
+            score: metricOption.value === 'WHO-5' ? s.score * 4 : s.score // Scale score if needed
+          }));
+
+      const surveysInRange = filterSurveysByRange(allSurveys, range.value);
+
+      return computeDepartmentBelowAverage(surveysInRange, overallAvgForRange);
+    }, [firestoreData, range.value, overallAvgForRange, metricOption.value]);
+
+
+// 2. NEW: Transform the data for the chart
+    const departmentDistributionChartData = useMemo(
+        () => transformDataForBarChart(departmentBelowAverage),
+        [departmentBelowAverage]
+    );
+
+
+// 3. NEW: Log the final data structure for verification
+    useEffect(() => {
+      console.log('--- Bar Chart Series Data ---');
+      console.log(departmentDistributionChartData);
+    }, [departmentDistributionChartData]);
+
+    // KPIs reflect filtered range
+    const latestWellness = filteredTrend[filteredTrend.length - 1]?.y ?? 0
+    const prevWellness = filteredTrend.length >= 2 ? filteredTrend[filteredTrend.length - 2].y : latestWellness
+    const wellnessDelta = Math.round(((latestWellness - prevWellness) || 0) * 10) / 10
+    const wellnessClass = classifyScore(latestWellness)
+
+    useEffect(() => {
+      if (!active.residents || active.residents.length === 0) return;
+
+      // We must use the raw Firestore data for the filter, not the mock data or the transformed residents list
+      // because the 'residents' list in the mock data doesn't contain the 'createdAt' Date object needed for filtering.
+      // Assuming 'firestoreData.surveys' holds the raw data when using real data.
+      const surveysWithDates = (firestoreData?.surveys || []).filter(s => s.createdAt)
+
+      // Apply the filter function here to the real data, if available.
+      const filteredResults = filterSurveysByRange(surveysWithDates, range.value);
+
+      // console.log('--- Filtered Survey Results for Range:', range.label, '---');
+      // console.log('Total surveys:', surveysWithDates.length);
+      // console.log('Filtered count:', filteredResults.length);
+      // if (filteredResults.length > 0) {
+      //     const oldest = filteredResults[0].createdAt.toLocaleDateString();
+      //     const newest = filteredResults[filteredResults.length - 1].createdAt.toLocaleDateString();
+      //     console.log(`Date Range: ${oldest} to ${newest}`);
+      // }
+      // console.log(filteredResults);
+
+      // // You can also log the data being used in your memoized calculations:
+      // console.log('Filtered Trend Data:', filteredTrend);
+      // console.log('Latest Wellness:', latestWellness);
+
+    }, [range, firestoreData, filteredTrend, latestWellness]);
+
+    // Show loading state
+    if (loading) {
+      return (
+          <AppLayout
+              content={
+                <ContentLayout>
+                  <Container>
+                    <SpaceBetween size="m" alignItems="center">
+                      <Spinner size="large"/>
+                      <Box variant="p">Loading dashboard data...</Box>
+                    </SpaceBetween>
+                  </Container>
+                </ContentLayout>
+              }
+              navigationHide
+              toolsHide
+          />
+      )
     }
-  }, [caps.trend, filteredTrend])
 
-  const monthsWindow = computeSliceWindow(range.value, heatmapMonths.length || 0)
-  const filteredWeekKeys = useMemo(
-    () => heatmapMonths.slice(monthsWindow.start, monthsWindow.end),
-    [heatmapMonths, monthsWindow.start, monthsWindow.end]
-  )
-  const filteredMonths = useMemo(
-    () => filteredWeekKeys.map(formatWeekRangeLabel),
-    [filteredWeekKeys]
-  )
-  const filteredHeatmapValues = useMemo(
-    () => heatmapVals.map(row => row.slice(monthsWindow.start, monthsWindow.end)),
-    [heatmapVals, monthsWindow.start, monthsWindow.end]
-  )
+    return (
+        <AppLayout
+            content={
+              <ContentLayout
+                  header={
+                    <Header variant="h1">
+                      <div className="brand-title">
+                        <Brand size="lg" center={false}/>
+                        <span className="title-text">General Overview</span>
+                      </div>
+                    </Header>
+                  }
+              >
+                <SpaceBetween size="l">
 
-  // Distribution (unchanged, resident data has no time stamps in mock)
-  const {
+                  {/* Show error/warning banner */}
+                  {error && (
+                      <Alert type={useMockData ? "warning" : "error"}
+                             header={useMockData ? "Using Mock Data" : "Error"}>
+                        {error}
+                      </Alert>
+                  )}
+
+                  {/* Show program ID if connected */}
+                  {programId && !useMockData && (
+                      <Alert type="success" dismissible>
+                        Connected to program: <strong>{programId}</strong>
+                      </Alert>
+                  )}
+
+                  {uploadSuccess && (
+                      <Alert type="success" dismissible onDismiss={() => setUploadSuccess(null)}>
+                        {uploadSuccess}
+                      </Alert>
+                  )}
+
+                  {uploadError && (
+                      <Alert type="error" dismissible onDismiss={() => setUploadError(null)}>
+                        {uploadError}
+                      </Alert>
+                  )}
+
+                  {/* Tab Navigation */}
+                  <Tabs
+                      activeTabId={activeTab}
+                      onChange={({detail}) => setActiveTab(detail.activeTabId)}
+                      tabs={[
+                        {
+                          id: 'analytics',
+                          label: 'Analytics Overview',
+                          content: (
+                              <SpaceBetween size="l">
+                                {/* Filters Row */}
+                                <Grid
+                                    gridDefinition={[
+                                      {colspan: {default: 12, xs: 12, s: 3}},
+                                      {colspan: {default: 12, xs: 12, s: 3}},
+                                      {colspan: {default: 12, xs: 12, s: 4}},
+                                      {colspan: {default: 12, xs: 12, s: 2}}
+                                    ]}
+                                >
+                                  <Container>
+                                    <SpaceBetween size="xs">
+                                      <Box variant="awsui-key-label">Metric</Box>
+                                      <Select
+                                          selectedOption={metricOption}
+                                          onChange={e => setMetricOption(e.detail.selectedOption)}
+                                          options={[
+                                            {label: 'WHO-5', value: 'WHO-5'},
+                                            {label: 'CG-CAHPS', value: 'CG-CAHPS'}
+                                          ]}
+                                      />
+                                    </SpaceBetween>
+                                  </Container>
+                                  <Container>
+                                    <SpaceBetween size="xs">
+                                      <Box variant="awsui-key-label">Filter By</Box>
+                                      <Select
+                                          selectedOption={departmentFilter}
+                                          onChange={e => setDepartmentFilter(e.detail.selectedOption)}
+                                          options={availableDepartments}
+                                      />
+                                    </SpaceBetween>
+                                  </Container>
+                                  <Container>
+                                    <SpaceBetween size="xs">
+                                      <Box variant="awsui-key-label">Range</Box>
+                                      <div style={{display: 'inline-flex', gap: 8, flexWrap: 'wrap'}}>
+                                        {PRESETS.map(p => (
+                                            <Button
+                                                key={p.id}
+                                                variant={range.value === p.value ? 'primary' : 'normal'}
+                                                onClick={() => setRange({label: p.label, value: p.value})}
+                                            >
+                                              {p.label}
+                                            </Button>
+                                        ))}
+                                      </div>
+                                    </SpaceBetween>
+                                  </Container>
+                                  <Container>
+                                    <SpaceBetween size="xs">
+                                      <Button onClick={handleExportCsv}>Export CSV</Button>
+                                      <Button onClick={handleExportPdf}>Export PDF</Button>
+                                    </SpaceBetween>
+                                  </Container>
+                                </Grid>
+
+                                {/* KPIs (WHO-5 only) */}
+                                {caps.kpis && (
+                                    <Grid
+                                        gridDefinition={[
+                                          {colspan: {default: 12, s: 3, l: 3}},
+                                          {colspan: {default: 12, s: 3, l: 3}},
+                                          {colspan: {default: 12, s: 3, l: 3}},
+                                          {colspan: {default: 12, s: 3, l: 3}}
+                                        ]}
+                                    >
+                                      <MetricCard
+                                          title="Wellness Score"
+                                          value={
+                                            <span>
+                      {latestWellness}
+                                              <Box as="span" color="text-status-success" fontSize="body-s"
+                                                   margin={{left: 'xs'}}>
+                        ↑ {wellnessDelta.toFixed(1)}
+                      </Box>
+                    </span>
+                                          }
+                                          status={wellnessClass}
+                                      />
+                                      <MetricCard
+                                          title="Overall Average"
+                                          value={overallAvgForRange}
+                                          status={classifyScore(overallAvgForRange)}
+                                      />
+                                      <MetricCard title="Number of Residents" value={numResidents}/>
+                                      {responseRateDisplay != null && (
+                                          <MetricCard title="Response Rate" value={`${responseRateDisplay}%`}/>
+                                      )}
+
+                                    </Grid>
+                                )}
+
+                                {/* Driver Metrics (CG-CAHPS only) */}
+                                {caps.drivers && (
+                                    <Container header={<Header variant="h3">Driver Metrics</Header>}>
+                                      <DriverMetricsChart driverMetrics={driverMetricsDisplay}/>
+                                      {cgRangeSummary && (
+                                          <Box margin={{top: 's'}} fontSize="body-s" color="text-body-secondary">
+                                            Showing CG-CAHPS data
+                                            from {cgRangeSummary.start ? cgRangeSummary.start.toLocaleDateString() : 'n/a'} to {cgRangeSummary.end ? cgRangeSummary.end.toLocaleDateString() : 'n/a'}
+                                            {cgRangeSummary.sampleSize ? ` • ${cgRangeSummary.sampleSize} surveys` : ''}
+                                          </Box>
+                                      )}
+                                      <Box margin={{top: 'xs'}} fontSize="body-xxs" color="text-body-secondary">
+                                        Hover for benchmark & delta. Highlight = focus driver.
+                                      </Box>
+                                    </Container>
+                                )}
+
+                                {/* Trend (WHO-5 only, filtered by time range) */}
+                                {caps.trend && (
+                                    <Grid gridDefinition={[{colspan: {default: 12}}]}>
+                                      <Container header={<Header variant="h3">{metricOption.label} Trend</Header>}>
+                                        <Box variant="p" color="text-body-secondary" margin={{bottom: 's'}}>
+                                          {metricOption.value === 'WHO-5' ? 'WHO-5 scores (0–100). Higher is better.' : ''}
+                                          {trendDateRange && (
+                                              <> Showing <strong>{trendDateRange.start.toLocaleDateString()}</strong> – <strong>{trendDateRange.end.toLocaleDateString()}</strong> (inclusive).</>
+                                          )}
+                                        </Box>
+                                        {(() => {
+                                          let timeSeries = filteredTrend.map(p => ({x: isoWeekKeyToDate(p.x), y: p.y}))
+                                          // For 1-week range, render two points (start/end) to show a line
+                                          if (range.value === '1w' && timeSeries.length === 1) {
+                                            const start = new Date(timeSeries[0].x)
+                                            const end = new Date(start)
+                                            end.setDate(start.getDate() + 6)
+                                            timeSeries = [
+                                              {x: start, y: timeSeries[0].y},
+                                              {x: end, y: timeSeries[0].y}
+                                            ]
+                                          }
+                                          return (
+                                              <LineChart
+                                                  hideFilter
+                                                  xScaleType="time"
+                                                  series={[{title: metricOption.label, type: 'line', data: timeSeries}]}
+                                                  yDomain={[0, 100]}
+                                                  i18nStrings={{
+                                                    filterLabel: 'Filter',
+                                                    filterPlaceholder: 'Filter',
+                                                    detailPopoverDismissAriaLabel: 'Dismiss',
+                                                    legendAriaLabel: 'Legend',
+                                                    chartAriaRoleDescription: 'line chart',
+                                                    xTickFormatter: d => {
+                                                      const rv = range.value
+                                                      if (rv === '1w') return d.toLocaleDateString(undefined, {
+                                                        weekday: 'short',
+                                                        month: 'short',
+                                                        day: 'numeric'
+                                                      })
+                                                      if (rv === '4w') return d.toLocaleDateString(undefined, {
+                                                        month: 'short',
+                                                        day: 'numeric'
+                                                      })
+                                                      if (rv === '12w' || rv === '6m' || rv === '12m') return d.toLocaleDateString(undefined, {month: 'short'})
+                                                      return d.toLocaleDateString()
+                                                    }
+                                                  }}
+                                                  ariaLabel="Metric score trend"
+                                                  height={260}
+                                              />
+                                          )
+                                        })()}
+                                      </Container>
+                                    </Grid>
+                                )}
+
+                                {(caps.heatmap || caps.drivers || caps.distribution) && (
+                                    <Grid
+                                        gridDefinition={[
+                                          {colspan: {default: 12}} // Use a single column for the full chart width
+                                        ]}
+                                    >
+                                      {caps.distribution && (
+                                          // Include the new chart only if distribution is applicable (WHO-5)
+                                          <DepartmentDistributionChart chartData={departmentDistributionChartData}/>
+                                      )}
+                                    </Grid>
+                                )}
+
+                                {/* Heatmap and/or compact driver bars */}
+                                {(caps.heatmap || caps.drivers) && (
+                                    <Grid
+                                        gridDefinition={
+                                          caps.heatmap && caps.drivers
+                                              ? [{colspan: {default: 12, s: 6}}, {colspan: {default: 12, s: 6}}]
+                                              : [{colspan: {default: 12}}]
+                                        }
+                                    >
+                                      {caps.heatmap && (
+                                          <Container
+                                              header={<Header variant="h3">Wellness Score by Department</Header>}>
+                                            <Heatmap months={filteredMonths} values={filteredHeatmapValues}
+                                                     departments={heatmapDepts}/>
+                                          </Container>
+                                      )}
+                                      {caps.drivers && (
+                                          <Container header={<Header variant="h3">Driver Metrics (Alt List)</Header>}>
+                                            <DriverMetricBars driverMetrics={driverMetricsDisplay}/>
+                                          </Container>
+                                      )}
+                                    </Grid>
+                                )}
+
+                                {/* Distribution at bottom (WHO-5 only) */}
+                                {caps.distribution && (
+                                    <Container>
+                                      <DistributionSection
+                                          avgWellness={avgWellness}
+                                          segmentAgg={segmentAgg}
+                                          aboveDeptBreakdown={aboveDeptBreakdown}
+                                          avgDeptBreakdown={avgDeptBreakdown}
+                                          belowAvgDeptBreakdown={belowAvgDeptBreakdown}
+                                          nearAboveCount={nearAboveCount}
+                                          nearAvgCount={nearAvgCount}
+                                          nearBelowCount={nearBelowCount}
+                                          wellnessDelta={wellnessDelta}
+                                          segmentDeltas={segmentDeltas}
+                                      />
+                                    </Container>
+                                )}
+                              </SpaceBetween>
+                          )
+                        },
+                        {
+                          id: 'manage',
+                          label: 'Manage Data',
+                          content: (
+                              <SpaceBetween size="l">
+                                <CgCahpsDrivers programId={programId}></CgCahpsDrivers>
+
+                                <Container header={<Header variant="h2">Upload CG-CAHPS Driver Metrics</Header>}>
+                                  <SpaceBetween size="m">
+                                    <Alert type="info">
+                                      Upload CG-CAHPS survey results to populate driver metrics in the Analytics tab.
+                                    </Alert>
+
+                                    <FormField
+                                        label="CSV File Upload"
+                                        description={
+                                          <span>
+                                CSV format: Driver,Score,Benchmark (scores 0-100).{' '}
+                                            <a href="/cgcahps-template.csv" download>Download template</a>
+                              </span>
+                                        }
+                                        secondaryControl={
+                                          <Button
+                                              variant="primary"
+                                              onClick={handleUploadCgCahps}
+                                              disabled={uploadFile.length === 0 || uploading || !programId}
+                                              loading={uploading}
+                                          >
+                                            Upload & Save
+                                          </Button>
+                                        }
+                                    >
+                                      <FileUpload
+                                          onChange={({detail}) => setUploadFile(detail.value)}
+                                          value={uploadFile}
+                                          showFileLastModified
+                                          showFileSize
+                                          accept=".csv"
+                                          i18nStrings={{
+                                            uploadButtonText: e => e ? "Choose files" : "Choose file",
+                                            dropzoneText: e => e ? "Drop files to upload" : "Drop file to upload",
+                                            removeFileAriaLabel: e => `Remove file ${e + 1}`,
+                                            limitShowFewer: "Show fewer files",
+                                            limitShowMore: "Show more files",
+                                            errorIconAriaLabel: "Error"
+                                          }}
+                                      />
+                                    </FormField>
+
+                                    {!useMockData && firestoreData && firestoreData.cgcahpsDrivers && firestoreData.cgcahpsDrivers.length > 0 && (
+                                        <Box>
+                                          <Header variant="h3">Current CG-CAHPS Driver Metrics</Header>
+                                          <Table
+                                              columnDefinitions={[
+                                                {id: 'name', header: 'Driver', cell: i => i.name},
+                                                {
+                                                  id: 'value',
+                                                  header: 'Score (%)',
+                                                  cell: i => Math.round(i.value * 100)
+                                                },
+                                                {
+                                                  id: 'benchmark',
+                                                  header: 'Benchmark (%)',
+                                                  cell: i => Math.round(i.benchmark * 100)
+                                                },
+                                                {
+                                                  id: 'delta',
+                                                  header: 'Δ',
+                                                  cell: i => {
+                                                    const delta = Math.round((i.value - i.benchmark) * 100)
+                                                    return (
+                                                        <Box
+                                                            color={delta >= 0 ? 'text-status-success' : 'text-status-error'}>
+                                                          {delta >= 0 ? '+' : ''}{delta}
+                                                        </Box>
+                                                    )
+                                                  }
+                                                }
+                                              ]}
+                                              items={firestoreData.cgcahpsDrivers}
+                                              variant="embedded"
+                                              stripedRows
+                                          />
+                                        </Box>
+                                    )}
+
+                                    {(useMockData || !firestoreData || !firestoreData.cgcahpsDrivers || firestoreData.cgcahpsDrivers.length === 0) && (
+                                        <Box variant="p" color="text-body-secondary">
+                                          No CG-CAHPS data uploaded yet. Upload a CSV file to populate driver metrics in
+                                          the Analytics tab.
+                                        </Box>
+                                    )}
+                                  </SpaceBetween>
+                                </Container>
+
+                                <Container header={<Header variant="h2">Data Management Tips</Header>}>
+                                  <SpaceBetween size="s">
+                                    <Box variant="p">
+                                      <strong>CG-CAHPS Dimensions:</strong> Standard metrics include Access to Care,
+                                      Communication,
+                                      Office Staff, Provider Rating, Care Coordination, and Shared Decision Making.
+                                    </Box>
+                                    <Box variant="p">
+                                      <strong>Score Format:</strong> Scores should be 0-100 (will be converted to
+                                      0.00-1.00 for display).
+                                    </Box>
+                                    <Box variant="p">
+                                      <strong>Benchmarks:</strong> Provide comparison scores (national, regional, or
+                                      historical).
+                                    </Box>
+                                    <Box variant="p">
+                                      <strong>Updating Data:</strong> Upload a new CSV file to replace existing CG-CAHPS
+                                      metrics.
+                                    </Box>
+                                  </SpaceBetween>
+                                </Container>
+                              </SpaceBetween>
+                          )
+                        }
+                      ]}
+                  />
+                </SpaceBetween>
+              </ContentLayout>
+            }
+            navigationHide
+            toolsHide
+        />
+    )
+  })
+
+
+  // ADD this new DistributionSection component (below other subcomponents)
+  const DistributionSection = ({
     avgWellness,
     segmentAgg,
     aboveDeptBreakdown,
@@ -2044,591 +2556,106 @@ export default function DashboardPage() {
     belowAvgDeptBreakdown,
     nearAboveCount,
     nearAvgCount,
-    nearBelowCount
-  } = useMemo(() => buildDistribution(residents, active.cohortSizesByDept || {}), [residents, active.cohortSizesByDept])
+    nearBelowCount,
+    wellnessDelta,
+    segmentDeltas
+  }) => {
+    const getSeg = name => segmentAgg.find(s => s.segment === name) || { numResidents: 0, respondents: 0, responseRate: 0, avgScore: 0 }
+    const above = getSeg('Above Average')
+    const average = getSeg('Average')
+    const below = getSeg('Below Average')
 
+    const Card = ({ title, data, nearCount, color, delta }) => (
+      <Container header={<Header variant="h3">{title}</Header>}>
+        <SpaceBetween size="xs">
+          <Box>
+            <Box variant="awsui-key-label">Number of Residents</Box>
+            <Box>{data.numResidents}</Box>
+          </Box>
+          <Box>
+            <Box variant="awsui-key-label">Avg score</Box>
+            <Box>{data.avgScore}</Box>
+          </Box>
+          <Box>
+            <Box variant="awsui-key-label">Near threshold (±5)</Box>
+            <Box>{nearCount}</Box>
+          </Box>
+          <Box>
+            <Box variant="awsui-key-label">Overall Δ</Box>
+            <Box color={(delta ?? wellnessDelta) >= 0 ? 'text-status-success' : 'text-status-error'}>
+              {formatSignedDelta(delta ?? wellnessDelta)}
+            </Box>
+          </Box>
+        </SpaceBetween>
+      </Container>
+    )
 
-
-  // Add this new calculation inside your main component, alongside other memoized values
-  const overallAvgForRange = useMemo(() => {
-    if (filteredTrend.length === 0) return 0
-
-    const sum = filteredTrend.reduce((total, point) => total + point.y, 0)
-    const avg = sum / filteredTrend.length
-
-    return Math.round(avg * 10) / 10 // Keep one-decimal precision
-  }, [filteredTrend])
-
-  // 1. You already have this calculation from the previous step:
-const departmentBelowAverage = useMemo(() => {
-  // ... (Your previous computeDepartmentBelowAverage logic here)
-  const allSurveys = (firestoreData?.surveys || [])
-    .filter(s => s.createdAt)
-    .map(s => ({
-      ...s,
-      score: metricOption.value === 'WHO-5' ? s.score * 4 : s.score // Scale score if needed
-    }));
-
-  const surveysInRange = filterSurveysByRange(allSurveys, range.value);
-
-  return computeDepartmentBelowAverage(surveysInRange, overallAvgForRange);
-}, [firestoreData, range.value, overallAvgForRange, metricOption.value]);
-
-
-// 2. NEW: Transform the data for the chart
-const departmentDistributionChartData = useMemo(
-  () => transformDataForBarChart(departmentBelowAverage),
-  [departmentBelowAverage]
-);
-
-
-// 3. NEW: Log the final data structure for verification
-useEffect(() => {
-  console.log('--- Bar Chart Series Data ---');
-  console.log(departmentDistributionChartData);
-}, [departmentDistributionChartData]);
-
-  // KPIs reflect filtered range
-  const latestWellness = filteredTrend[filteredTrend.length - 1]?.y ?? 0
-  const prevWellness = filteredTrend.length >= 2 ? filteredTrend[filteredTrend.length - 2].y : latestWellness
-  const wellnessDelta = Math.round(((latestWellness - prevWellness) || 0) * 10) / 10
-  const wellnessClass = classifyScore(latestWellness)
-
-  useEffect(() => {
-    if (!active.residents || active.residents.length === 0) return;
-
-    // We must use the raw Firestore data for the filter, not the mock data or the transformed residents list
-    // because the 'residents' list in the mock data doesn't contain the 'createdAt' Date object needed for filtering.
-    // Assuming 'firestoreData.surveys' holds the raw data when using real data.
-    const surveysWithDates = (firestoreData?.surveys || []).filter(s => s.createdAt)
-
-    // Apply the filter function here to the real data, if available.
-    const filteredResults = filterSurveysByRange(surveysWithDates, range.value);
-
-    // console.log('--- Filtered Survey Results for Range:', range.label, '---');
-    // console.log('Total surveys:', surveysWithDates.length);
-    // console.log('Filtered count:', filteredResults.length);
-    // if (filteredResults.length > 0) {
-    //     const oldest = filteredResults[0].createdAt.toLocaleDateString();
-    //     const newest = filteredResults[filteredResults.length - 1].createdAt.toLocaleDateString();
-    //     console.log(`Date Range: ${oldest} to ${newest}`);
-    // }
-    // console.log(filteredResults);
-
-    // // You can also log the data being used in your memoized calculations:
-    // console.log('Filtered Trend Data:', filteredTrend);
-    // console.log('Latest Wellness:', latestWellness);
-
-}, [range, firestoreData, filteredTrend, latestWellness]);
-
-  // Show loading state
-  if (loading) {
     return (
-      <AppLayout
-        content={
-          <ContentLayout>
-            <Container>
-              <SpaceBetween size="m" alignItems="center">
-                <Spinner size="large" />
-                <Box variant="p">Loading dashboard data...</Box>
-              </SpaceBetween>
-            </Container>
-          </ContentLayout>
-        }
-        navigationHide
-        toolsHide
-      />
+      <SpaceBetween size="l">
+        <Header variant="h2" description={`Mean Wellness: ${Math.round(avgWellness)}`}>Distribution</Header>
+
+        {/* Summary cards */}
+        <Grid gridDefinition={[
+          { colspan: { default: 12, s: 4 } },
+          { colspan: { default: 12, s: 4 } },
+          { colspan: { default: 12, s: 4 } }
+        ]}>
+          <Card title="Above Average" data={above} nearCount={nearAboveCount} color="positive" delta={segmentDeltas?.above} />
+          <Card title="Average" data={average} nearCount={nearAvgCount} color="normal" delta={segmentDeltas?.average} />
+          <Card title="Below Average" data={below} nearCount={nearBelowCount} color="warning" delta={segmentDeltas?.below} />
+        </Grid>
+
+        {/* Below Average details (moved here, replaces separate section) */}
+        <Container header={<Header variant="h3">Below Average by Department</Header>}>
+          <Table
+            items={belowAvgDeptBreakdown}
+            columnDefinitions={[
+              { id: 'dept', header: 'Department', cell: i => i.dept },
+              { id: 'numResidents', header: 'Number of Residents', cell: i => i.numResidents },
+              { id: 'pct', header: '% of Below Avg', cell: i => i.pct + '%' },
+              { id: 'avg', header: 'Avg Score', cell: i => i.avg }
+            ]}
+            variant="embedded"
+            stripedRows
+          />
+        </Container>
+
+        {/* Department breakdowns for all segments */}
+        <Grid gridDefinition={[{ colspan: { default: 12, s: 6 } }, { colspan: { default: 12, s: 6 } }]}>
+          <Container header={<Header variant="h3">Average by Department</Header>}>
+            <Table
+              items={avgDeptBreakdown}
+              columnDefinitions={[
+                { id: 'dept', header: 'Department', cell: i => i.dept },
+                { id: 'numResidents', header: 'Number of Residents', cell: i => i.numResidents },
+                { id: 'avg', header: 'Avg Score', cell: i => i.avg }
+              ]}
+              variant="embedded"
+              stripedRows
+            />
+          </Container>
+          <Container header={<Header variant="h3">Above Average by Department</Header>}>
+            <Table
+              items={aboveDeptBreakdown}
+              columnDefinitions={[
+                { id: 'dept', header: 'Department', cell: i => i.dept },
+                { id: 'numResidents', header: 'Number of Residents', cell: i => i.numResidents },
+                { id: 'avg', header: 'Avg Score', cell: i => i.avg }
+              ]}
+              variant="embedded"
+              stripedRows
+            />
+          </Container>
+        </Grid>
+      </SpaceBetween>
     )
   }
 
-  return (
-    <AppLayout
-      content={
-        <ContentLayout
-          header={
-            <Header variant="h1">
-              <div className="brand-title">
-                <Brand size="lg" center={false} />
-                <span className="title-text">General Overview</span>
-              </div>
-            </Header>
-          }
-        >
-          <SpaceBetween size="l">
-            
-            {/* Show error/warning banner */}
-            {error && (
-              <Alert type={useMockData ? "warning" : "error"} header={useMockData ? "Using Mock Data" : "Error"}>
-                {error}
-              </Alert>
-            )}
-            
-            {/* Show program ID if connected */}
-            {programId && !useMockData && (
-              <Alert type="success" dismissible>
-                Connected to program: <strong>{programId}</strong>
-              </Alert>
-            )}
-            
-            {uploadSuccess && (
-              <Alert type="success" dismissible onDismiss={() => setUploadSuccess(null)}>
-                {uploadSuccess}
-              </Alert>
-            )}
-            
-            {uploadError && (
-              <Alert type="error" dismissible onDismiss={() => setUploadError(null)}>
-                {uploadError}
-              </Alert>
-            )}
-
-            {/* Tab Navigation */}
-            <Tabs
-              activeTabId={activeTab}
-              onChange={({ detail }) => setActiveTab(detail.activeTabId)}
-              tabs={[
-                {
-                  id: 'analytics',
-                  label: 'Analytics Overview',
-                  content: (
-                    <SpaceBetween size="l">
-                      {/* Filters Row */}
-            <Grid
-              gridDefinition={[
-                { colspan: { default: 12, xs: 12, s: 3 } },
-                { colspan: { default: 12, xs: 12, s: 3 } },
-                { colspan: { default: 12, xs: 12, s: 4 } },
-                { colspan: { default: 12, xs: 12, s: 2 } }
-              ]}
-            >
-              <Container>
-                <SpaceBetween size="xs">
-                  <Box variant="awsui-key-label">Metric</Box>
-                  <Select
-                    selectedOption={metricOption}
-                    onChange={e => setMetricOption(e.detail.selectedOption)}
-                    options={[
-                      { label: 'WHO-5', value: 'WHO-5' },
-                      { label: 'CG-CAHPS', value: 'CG-CAHPS' }
-                    ]}
-                  />
-                </SpaceBetween>
-              </Container>
-              <Container>
-                <SpaceBetween size="xs">
-                  <Box variant="awsui-key-label">Filter By</Box>
-                  <Select
-                      selectedOption={departmentFilter}
-                      onChange={e => setDepartmentFilter(e.detail.selectedOption)}
-                      options={availableDepartments}
-                  />
-                </SpaceBetween>
-              </Container>
-              <Container>
-                <SpaceBetween size="xs">
-                  <Box variant="awsui-key-label">Range</Box>
-                  <div style={{ display:'inline-flex', gap:8, flexWrap:'wrap' }}>
-                    {PRESETS.map(p => (
-                      <Button
-                        key={p.id}
-                        variant={range.value === p.value ? 'primary' : 'normal'}
-                        onClick={() => setRange({ label: p.label, value: p.value })}
-                      >
-                        {p.label}
-                      </Button>
-                    ))}
-                  </div>
-                </SpaceBetween>
-              </Container>
-              <Container>
-                <SpaceBetween size="xs">
-                  <Button onClick={handleExportCsv}>Export CSV</Button>
-                  <Button onClick={handleExportPdf}>Export PDF</Button>
-                </SpaceBetween>
-              </Container>
-            </Grid>
-
-            {/* KPIs (WHO-5 only) */}
-            {caps.kpis && (
-              <Grid
-                gridDefinition={[
-                  { colspan: { default: 12, s: 3, l: 3 } },
-                  { colspan: { default: 12, s: 3, l: 3 } },
-                  { colspan: { default: 12, s: 3, l: 3 } },
-                  { colspan: { default: 12, s: 3, l: 3 } }
-                ]}
-              >
-                <MetricCard
-                  title="Wellness Score"
-                  value={
-                    <span>
-                      {latestWellness}
-                      <Box as="span" color="text-status-success" fontSize="body-s" margin={{ left: 'xs' }}>
-                        ↑ {wellnessDelta.toFixed(1)}
-                      </Box>
-                    </span>
-                  }
-                  status={wellnessClass}
-                />
-                <MetricCard
-                    title="Overall Average"
-                    value={overallAvgForRange}
-                    status={classifyScore(overallAvgForRange)}
-                />
-                <MetricCard title="Number of Residents" value={numResidents} />
-                {responseRateDisplay != null && (
-                  <MetricCard title="Response Rate" value={`${responseRateDisplay}%`} />
-                )}
-
-              </Grid>
-            )}
-
-            {/* Driver Metrics (CG-CAHPS only) */}
-            {caps.drivers && (
-              <Container header={<Header variant="h3">Driver Metrics</Header>}>
-                <DriverMetricsChart driverMetrics={driverMetricsDisplay} />
-                {cgRangeSummary && (
-                  <Box margin={{ top: 's' }} fontSize="body-s" color="text-body-secondary">
-                    Showing CG-CAHPS data from {cgRangeSummary.start ? cgRangeSummary.start.toLocaleDateString() : 'n/a'} to {cgRangeSummary.end ? cgRangeSummary.end.toLocaleDateString() : 'n/a'}
-                    {cgRangeSummary.sampleSize ? ` • ${cgRangeSummary.sampleSize} surveys` : ''}
-                  </Box>
-                )}
-                <Box margin={{ top: 'xs' }} fontSize="body-xxs" color="text-body-secondary">
-                  Hover for benchmark & delta. Highlight = focus driver.
-                </Box>
-              </Container>
-            )}
-
-            {/* Trend (WHO-5 only, filtered by time range) */}
-            {caps.trend && (
-              <Grid gridDefinition={[{ colspan: { default: 12 } }]}>
-                <Container header={<Header variant="h3">{metricOption.label} Trend</Header>}>
-                  <Box variant="p" color="text-body-secondary" margin={{ bottom: 's' }}>
-                    {metricOption.value === 'WHO-5' ? 'WHO-5 scores (0–100). Higher is better.' : ''}
-                    {trendDateRange && (
-                      <> Showing <strong>{trendDateRange.start.toLocaleDateString()}</strong> – <strong>{trendDateRange.end.toLocaleDateString()}</strong> (inclusive).</>
-                    )}
-                  </Box>
-                  {(() => {
-                    let timeSeries = filteredTrend.map(p => ({ x: isoWeekKeyToDate(p.x), y: p.y }))
-                    // For 1-week range, render two points (start/end) to show a line
-                    if (range.value === '1w' && timeSeries.length === 1) {
-                      const start = new Date(timeSeries[0].x)
-                      const end = new Date(start)
-                      end.setDate(start.getDate() + 6)
-                      timeSeries = [
-                        { x: start, y: timeSeries[0].y },
-                        { x: end,   y: timeSeries[0].y }
-                      ]
-                    }
-                    return (
-                      <LineChart
-                          hideFilter
-                        xScaleType="time"
-                        series={[{ title: metricOption.label, type: 'line', data: timeSeries }]}
-                        yDomain={[0, 100]}
-                        i18nStrings={{
-                          filterLabel: 'Filter',
-                          filterPlaceholder: 'Filter',
-                          detailPopoverDismissAriaLabel: 'Dismiss',
-                          legendAriaLabel: 'Legend',
-                          chartAriaRoleDescription: 'line chart',
-                          xTickFormatter: d => {
-                            const rv = range.value
-                            if (rv === '1w') return d.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' })
-                            if (rv === '4w') return d.toLocaleDateString(undefined, { month:'short', day:'numeric' })
-                            if (rv === '12w' || rv === '6m' || rv === '12m') return d.toLocaleDateString(undefined, { month:'short' })
-                            return d.toLocaleDateString()
-                          }
-                        }}
-                        ariaLabel="Metric score trend"
-                        height={260}
-                      />
-                    )
-                  })()}
-                </Container>
-              </Grid>
-            )}
-
-            {(caps.heatmap || caps.drivers || caps.distribution) && (
-              <Grid
-                gridDefinition={[
-                  { colspan: { default: 12 } } // Use a single column for the full chart width
-                ]}
-              >
-                {caps.distribution && (
-                  // Include the new chart only if distribution is applicable (WHO-5)
-                  <DepartmentDistributionChart chartData={departmentDistributionChartData} />
-                )}
-              </Grid>
-            )}
-
-                      {/* Heatmap and/or compact driver bars */}
-                      {(caps.heatmap || caps.drivers) && (
-                          <Grid
-                              gridDefinition={
-                                caps.heatmap && caps.drivers
-                                    ? [{colspan: { default: 12, s: 6 } }, { colspan: { default: 12, s: 6 } }]
-                    : [{ colspan: { default: 12 } }]
-                }
-              >
-                {caps.heatmap && (
-                  <Container header={<Header variant="h3">Wellness Score by Department</Header>}>
-                    <Heatmap months={filteredMonths} values={filteredHeatmapValues} departments={heatmapDepts} />
-                  </Container>
-                )}
-                {caps.drivers && (
-                  <Container header={<Header variant="h3">Driver Metrics (Alt List)</Header>}>
-                    <DriverMetricBars driverMetrics={driverMetricsDisplay} />
-                  </Container>
-                )}
-              </Grid>
-            )}
-
-            {/* Distribution at bottom (WHO-5 only) */}
-            {caps.distribution && (
-              <Container>
-                <DistributionSection
-                  avgWellness={avgWellness}
-                  segmentAgg={segmentAgg}
-                  aboveDeptBreakdown={aboveDeptBreakdown}
-                  avgDeptBreakdown={avgDeptBreakdown}
-                  belowAvgDeptBreakdown={belowAvgDeptBreakdown}
-                  nearAboveCount={nearAboveCount}
-                  nearAvgCount={nearAvgCount}
-                  nearBelowCount={nearBelowCount}
-                  wellnessDelta={wellnessDelta}
-                  segmentDeltas={segmentDeltas}
-                />
-              </Container>
-            )}
-                    </SpaceBetween>
-                  )
-                },
-                {
-                  id: 'manage',
-                  label: 'Manage Data',
-                  content: (
-                    <SpaceBetween size="l">
-                      <CgCahpsDrivers programId={programId}></CgCahpsDrivers>
-                      
-                      <Container header={<Header variant="h2">Upload CG-CAHPS Driver Metrics</Header>}>
-                        <SpaceBetween size="m">
-                          <Alert type="info">
-                            Upload CG-CAHPS survey results to populate driver metrics in the Analytics tab.
-                          </Alert>
-                          
-                          <FormField 
-                            label="CSV File Upload" 
-                            description={
-                              <span>
-                                CSV format: Driver,Score,Benchmark (scores 0-100).{' '}
-                                <a href="/cgcahps-template.csv" download>Download template</a>
-                              </span>
-                            }
-                            secondaryControl={
-                              <Button 
-                                variant="primary" 
-                                onClick={handleUploadCgCahps}
-                                disabled={uploadFile.length === 0 || uploading || !programId}
-                                loading={uploading}
-                              >
-                                Upload & Save
-                              </Button>
-                            }
-                          >
-                            <FileUpload
-                              onChange={({ detail }) => setUploadFile(detail.value)}
-                              value={uploadFile}
-                              showFileLastModified
-                              showFileSize
-                              accept=".csv"
-                              i18nStrings={{
-                                uploadButtonText: e => e ? "Choose files" : "Choose file",
-                                dropzoneText: e => e ? "Drop files to upload" : "Drop file to upload",
-                                removeFileAriaLabel: e => `Remove file ${e + 1}`,
-                                limitShowFewer: "Show fewer files",
-                                limitShowMore: "Show more files",
-                                errorIconAriaLabel: "Error"
-                              }}
-                            />
-                          </FormField>
-                          
-                          {!useMockData && firestoreData && firestoreData.cgcahpsDrivers && firestoreData.cgcahpsDrivers.length > 0 && (
-                            <Box>
-                              <Header variant="h3">Current CG-CAHPS Driver Metrics</Header>
-                              <Table
-                                columnDefinitions={[
-                                  { id: 'name', header: 'Driver', cell: i => i.name },
-                                  { id: 'value', header: 'Score (%)', cell: i => Math.round(i.value * 100) },
-                                  { id: 'benchmark', header: 'Benchmark (%)', cell: i => Math.round(i.benchmark * 100) },
-                                  { 
-                                    id: 'delta', 
-                                    header: 'Δ', 
-                                    cell: i => {
-                                      const delta = Math.round((i.value - i.benchmark) * 100)
-                                      return (
-                                        <Box color={delta >= 0 ? 'text-status-success' : 'text-status-error'}>
-                                          {delta >= 0 ? '+' : ''}{delta}
-                                        </Box>
-                                      )
-                                    }
-                                  }
-                                ]}
-                                items={firestoreData.cgcahpsDrivers}
-                                variant="embedded"
-                                stripedRows
-                              />
-                            </Box>
-                          )}
-                          
-                          {(useMockData || !firestoreData || !firestoreData.cgcahpsDrivers || firestoreData.cgcahpsDrivers.length === 0) && (
-                            <Box variant="p" color="text-body-secondary">
-                              No CG-CAHPS data uploaded yet. Upload a CSV file to populate driver metrics in the Analytics tab.
-                            </Box>
-                          )}
-                        </SpaceBetween>
-                      </Container>
-                      
-                      <Container header={<Header variant="h2">Data Management Tips</Header>}>
-                        <SpaceBetween size="s">
-                          <Box variant="p">
-                            <strong>CG-CAHPS Dimensions:</strong> Standard metrics include Access to Care, Communication, 
-                            Office Staff, Provider Rating, Care Coordination, and Shared Decision Making.
-                          </Box>
-                          <Box variant="p">
-                            <strong>Score Format:</strong> Scores should be 0-100 (will be converted to 0.00-1.00 for display).
-                          </Box>
-                          <Box variant="p">
-                            <strong>Benchmarks:</strong> Provide comparison scores (national, regional, or historical).
-                          </Box>
-                          <Box variant="p">
-                            <strong>Updating Data:</strong> Upload a new CSV file to replace existing CG-CAHPS metrics.
-                          </Box>
-                        </SpaceBetween>
-                      </Container>
-                    </SpaceBetween>
-                  )
-                }
-              ]}
-            />
-          </SpaceBetween>
-        </ContentLayout>
-      }
-      navigationHide
-      toolsHide
-    />
-  )
-}
-
-// ADD this new DistributionSection component (below other subcomponents)
-const DistributionSection = ({
-  avgWellness,
-  segmentAgg,
-  aboveDeptBreakdown,
-  avgDeptBreakdown,
-  belowAvgDeptBreakdown,
-  nearAboveCount,
-  nearAvgCount,
-  nearBelowCount,
-  wellnessDelta,
-  segmentDeltas
-}) => {
-  const getSeg = name => segmentAgg.find(s => s.segment === name) || { numResidents: 0, respondents: 0, responseRate: 0, avgScore: 0 }
-  const above = getSeg('Above Average')
-  const average = getSeg('Average')
-  const below = getSeg('Below Average')
-
-  const Card = ({ title, data, nearCount, color, delta }) => (
-    <Container header={<Header variant="h3">{title}</Header>}>
-      <SpaceBetween size="xs">
-        <Box>
-          <Box variant="awsui-key-label">Number of Residents</Box>
-          <Box>{data.numResidents}</Box>
-        </Box>
-        <Box>
-          <Box variant="awsui-key-label">Avg score</Box>
-          <Box>{data.avgScore}</Box>
-        </Box>
-        <Box>
-          <Box variant="awsui-key-label">Near threshold (±5)</Box>
-          <Box>{nearCount}</Box>
-        </Box>
-        <Box>
-          <Box variant="awsui-key-label">Overall Δ</Box>
-          <Box color={(delta ?? wellnessDelta) >= 0 ? 'text-status-success' : 'text-status-error'}>
-            {formatSignedDelta(delta ?? wellnessDelta)}
-          </Box>
-        </Box>
-      </SpaceBetween>
-    </Container>
-  )
-
-  return (
-    <SpaceBetween size="l">
-      <Header variant="h2" description={`Mean Wellness: ${Math.round(avgWellness)}`}>Distribution</Header>
-
-      {/* Summary cards */}
-      <Grid gridDefinition={[
-        { colspan: { default: 12, s: 4 } },
-        { colspan: { default: 12, s: 4 } },
-        { colspan: { default: 12, s: 4 } }
-      ]}>
-        <Card title="Above Average" data={above} nearCount={nearAboveCount} color="positive" delta={segmentDeltas?.above} />
-        <Card title="Average" data={average} nearCount={nearAvgCount} color="normal" delta={segmentDeltas?.average} />
-        <Card title="Below Average" data={below} nearCount={nearBelowCount} color="warning" delta={segmentDeltas?.below} />
-      </Grid>
-
-      {/* Below Average details (moved here, replaces separate section) */}
-      <Container header={<Header variant="h3">Below Average by Department</Header>}>
-        <Table
-          items={belowAvgDeptBreakdown}
-          columnDefinitions={[
-            { id: 'dept', header: 'Department', cell: i => i.dept },
-            { id: 'numResidents', header: 'Number of Residents', cell: i => i.numResidents },
-            { id: 'pct', header: '% of Below Avg', cell: i => i.pct + '%' },
-            { id: 'avg', header: 'Avg Score', cell: i => i.avg }
-          ]}
-          variant="embedded"
-          stripedRows
-        />
-      </Container>
-
-      {/* Department breakdowns for all segments */}
-      <Grid gridDefinition={[{ colspan: { default: 12, s: 6 } }, { colspan: { default: 12, s: 6 } }]}>
-        <Container header={<Header variant="h3">Average by Department</Header>}>
-          <Table
-            items={avgDeptBreakdown}
-            columnDefinitions={[
-              { id: 'dept', header: 'Department', cell: i => i.dept },
-              { id: 'numResidents', header: 'Number of Residents', cell: i => i.numResidents },
-              { id: 'avg', header: 'Avg Score', cell: i => i.avg }
-            ]}
-            variant="embedded"
-            stripedRows
-          />
-        </Container>
-        <Container header={<Header variant="h3">Above Average by Department</Header>}>
-          <Table
-            items={aboveDeptBreakdown}
-            columnDefinitions={[
-              { id: 'dept', header: 'Department', cell: i => i.dept },
-              { id: 'numResidents', header: 'Number of Residents', cell: i => i.numResidents },
-              { id: 'avg', header: 'Avg Score', cell: i => i.avg }
-            ]}
-            variant="embedded"
-            stripedRows
-          />
-        </Container>
-      </Grid>
-    </SpaceBetween>
-  )
-}
-
-// Nicely format signed deltas with fixed decimals and plus sign
-function formatSignedDelta(n, decimals = 1) {
-  const p = Math.pow(10, decimals)
-  const rounded = Math.round((Number(n) || 0) * p) / p
-  const value = rounded.toFixed(decimals)
-  return `${rounded >= 0 ? '+' : ''}${value}`
+  // Nicely format signed deltas with fixed decimals and plus sign
+  function formatSignedDelta(n, decimals = 1) {
+    const p = Math.pow(10, decimals)
+    const rounded = Math.round((Number(n) || 0) * p) / p
+    const value = rounded.toFixed(decimals)
+    return `${rounded >= 0 ? '+' : ''}${value}`
+  }
 }
