@@ -1502,7 +1502,7 @@ export default function DashboardPage() {
         const surveysQuery = query(
           collection(db, `programs/${manageProgramId}/anon_surveys`),
           orderBy('createdAt', 'desc'),
-          limit(500)
+          limit(10000)
         )
         
         const surveysSnap = await getDocs(surveysQuery)
@@ -1817,25 +1817,6 @@ export default function DashboardPage() {
 
     const deptKey = departmentFilter.value
 
-    // Prefer precomputed map from Firestore
-    const fromMap = active.responseRatesByDept
-    if (fromMap) {
-      if (deptKey === 'all') {
-        const stats = Object.values(fromMap)
-        if (stats.length === 0) return null
-        const totalResponded = stats.reduce((sum, s) => sum + (s?.numResponded || 0), 0)
-        const totalCohort = stats.reduce((sum, s) => sum + (s?.cohortSize || 0), 0)
-        if (totalCohort === 0) return null
-        return (totalResponded / totalCohort) * 100
-      }
-      const stat = fromMap[deptKey]
-      if (stat && stat.responseRate != null) return stat.responseRate
-    }
-
-    // Fallback to any aggregate provided on the active metric
-    if (active.responseRate != null) return Number(active.responseRate)
-
-    // Fallback compute from surveys + cohort sizes limited to visible trend range
     const surveys = active.surveys
     const cohortSizesByDept = active.cohortSizesByDept
     if (!surveys || !cohortSizesByDept) return null
@@ -1845,12 +1826,13 @@ export default function DashboardPage() {
       : (Number(cohortSizesByDept[deptKey]) || 0)
     if (cohortSize === 0) return null
 
-    const visibleDays = new Set(filteredTrend.map(p => String(p.x)))
+    const visibleWeeks = new Set(filteredTrend.map(p => String(p.x)))
     const uniqueResidentIds = new Set()
 
     for (const s of surveys) {
       if (deptKey !== 'all' && s.department !== deptKey) continue
-      if (!s.dayKey || !visibleDays.has(String(s.dayKey))) continue
+      const wk = s.weekKey || (s.dayKey ? deriveIsoWeekKey(new Date(s.dayKey)) : null)
+      if (!wk || !visibleWeeks.has(String(wk))) continue
       if (!s.resident_id) continue
       uniqueResidentIds.add(String(s.resident_id))
     }

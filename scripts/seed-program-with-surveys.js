@@ -16,6 +16,7 @@
 
 import { initializeApp } from 'firebase/app'
 import { getFirestore, doc, setDoc, writeBatch, Timestamp, connectFirestoreEmulator } from 'firebase/firestore'
+import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword, updateProfile, signInWithEmailAndPassword } from 'firebase/auth'
 import { config as loadEnv } from 'dotenv'
 import fs from 'fs'
 import path from 'path'
@@ -66,10 +67,15 @@ if (!firebaseConfig.projectId) {
 
 const app = initializeApp(firebaseConfig)
 const db = getFirestore(app)
+const auth = getAuth(app)
 if (process.env.FIRESTORE_EMULATOR_HOST) {
   const [host, port] = process.env.FIRESTORE_EMULATOR_HOST.split(':')
   connectFirestoreEmulator(db, host, Number(port) || 8080)
   console.log(`Using Firestore emulator at ${host}:${port || 8080}`)
+}
+if (process.env.FIREBASE_AUTH_EMULATOR_HOST) {
+  connectAuthEmulator(auth, `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST}`)
+  console.log(`Using Auth emulator at ${process.env.FIREBASE_AUTH_EMULATOR_HOST}`)
 }
 
 // ----------- Helpers -------------------------------------------------------
@@ -135,27 +141,21 @@ function buildManagerDoc(programId, departments) {
   }
 }
 
-function buildResidents(programId, departments, residentsPerDept) {
-  const residents = []
+function buildResidentSeeds(programId, departments, residentsPerDept) {
+  const seeds = []
   departments.forEach(dept => {
     for (let i = 0; i < residentsPerDept; i++) {
-      const rid = randId('res_')
-      residents.push({
-        id: rid,
-        ref: doc(db, 'resident_info', rid),
+      const email = `resident+${dept.replace(/\s+/g, '').toLowerCase()}${i + 1}@example.com`
+      seeds.push({
         department: dept,
-        data: {
-          resident_id: rid,
-          program_id: programId,
-          department: dept,
-          first_name: `Resident ${i + 1}`,
-          last_name: dept,
-          email: `resident+${dept.replace(/\s+/g, '').toLowerCase()}${i + 1}@example.com`
-        }
+        program_id: programId,
+        first_name: `Resident ${i + 1}`,
+        last_name: dept,
+        email
       })
     }
   })
-  return residents
+  return seeds
 }
 
 function buildSurveysForResident(residentId, department, surveysPerResident, weeksBack) {
@@ -194,21 +194,66 @@ async function main() {
   if (CONFIG.dryRun) console.log('DRY RUN (no writes)\n')
 
   const manager = buildManagerDoc(CONFIG.programId, CONFIG.departments)
-  const residents = buildResidents(CONFIG.programId, CONFIG.departments, CONFIG.residentsPerDept)
-
-  const surveys = residents.flatMap(r =>
-    buildSurveysForResident(r.id, r.department, CONFIG.surveysPerResident, CONFIG.weeksBack)
-  )
+  const residentSeeds = buildResidentSeeds(CONFIG.programId, CONFIG.departments, CONFIG.residentsPerDept)
 
   if (CONFIG.dryRun) {
     console.log(`Would create manager: ${manager.id}`)
-    console.log(`Would create residents: ${residents.length}`)
-    console.log(`Would create surveys: ${surveys.length}`)
-    console.log('Sample survey:', surveys[0])
+    console.log(`Would create residents: ${residentSeeds.length}`)
+    console.log('Sample resident login:', { email: residentSeeds[0]?.email, password: 'Prevworks123!' })
+    console.log(`Would create surveys: will be generated per resident with ${CONFIG.surveysPerResident} entries`)
     return
   }
 
-  // manager + residents batch
+  // Create Auth users first to get stable uids
+  const residents = []
+  for (const seed of residentSeeds) {
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, seed.email, 'Prevworks123!')
+      await updateProfile(cred.user, { displayName: `${seed.first_name} ${seed.last_name}` })
+      residents.push({
+        id: cred.user.uid,
+        ref: doc(db, 'resident_info', cred.user.uid),
+        department: seed.department,
+        data: {
+          resident_id: cred.user.uid,
+          program_id: seed.program_id,
+          department: seed.department,
+          first_name: seed.first_name,
+          last_name: seed.last_name,
+          email: seed.email
+        },
+        email: seed.email
+      })
+      console.log(`✓ Created auth user ${seed.email}`)
+    } catch (err) {
+      if (String(err?.code || '').includes('auth/email-already-in-use')) {
+        try {
+          const cred = await signInWithEmailAndPassword(auth, seed.email, 'Prevworks123!')
+          residents.push({
+            id: cred.user.uid,
+            ref: doc(db, 'resident_info', cred.user.uid),
+            department: seed.department,
+            data: {
+              resident_id: cred.user.uid,
+              program_id: seed.program_id,
+              department: seed.department,
+              first_name: seed.first_name,
+              last_name: seed.last_name,
+              email: seed.email
+            },
+            email: seed.email
+          })
+          console.log(`ℹ️ Reused existing auth user ${seed.email}`)
+        } catch (signinErr) {
+          console.warn(`⚠️ Failed to reuse existing auth user ${seed.email}:`, signinErr.message || signinErr)
+        }
+      } else {
+        console.warn(`⚠️ Failed to create auth user ${seed.email}:`, err.message || err)
+      }
+    }
+  }
+
+  // manager + residents batch (resident_info)
   const batch = writeBatch(db)
   batch.set(manager.ref, manager.data)
   // create a minimal program doc so subcollections are anchored
@@ -220,6 +265,11 @@ async function main() {
   residents.forEach(r => batch.set(r.ref, r.data))
   await batch.commit()
   console.log(`✓ Wrote manager_info doc and ${residents.length} resident_info docs`)
+
+  // Build surveys now that we have real resident ids
+  const surveys = residents.flatMap(r =>
+    buildSurveysForResident(r.id, r.department, CONFIG.surveysPerResident, CONFIG.weeksBack)
+  )
 
   // surveys (chunk to stay under batch limits; 2 writes per survey)
   const batchSize = 200

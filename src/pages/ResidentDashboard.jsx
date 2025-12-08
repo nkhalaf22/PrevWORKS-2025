@@ -42,6 +42,7 @@ const NATIONAL_WHO5_AVG_BY_REGION = { US: 16.05 }
 export default function ResidentDashboard() {
     const navigate = useNavigate()
     const [loading, setLoading] = React.useState(true)
+    const [profile, setProfile] = React.useState(null)
     const [points, setPoints] = React.useState([])
     const [alreadyToday, setAlreadyToday] = React.useState(false)
     const [programLocation, setProgramLocation] = React.useState('US')
@@ -59,6 +60,22 @@ export default function ResidentDashboard() {
                 const profSnap = await getDoc(profRef)
                 let programId = null
                 if (profSnap.exists()) programId = profSnap.get('program_id') || null
+                if (profSnap.exists()) {
+                    const data = profSnap.data()
+                    setProfile({
+                        name: `${data.first_name || ''} ${data.last_name || ''}`.trim() || user.email || 'Resident',
+                        department: data.department || 'Unknown',
+                        programId: data.program_id || programId || 'N/A',
+                        email: data.email || user.email
+                    })
+                } else {
+                    setProfile({
+                        name: user.email || 'Resident',
+                        department: 'Unknown',
+                        programId: programId || 'N/A',
+                        email: user.email
+                    })
+                }
 
                 // program → location (normalize to region key)
                 if (programId) {
@@ -164,6 +181,17 @@ export default function ResidentDashboard() {
                     }
                 >
                     <SpaceBetween size="l">
+                        {profile && (
+                            <Container variant="stacked">
+                                <Header variant="h3">Welcome, {profile.name}</Header>
+                                <ColumnLayout columns={3} variant="text-grid">
+                                    <ProfileItem label="Email" value={profile.email || '—'} />
+                                    <ProfileItem label="Department" value={profile.department || '—'} />
+                                    <ProfileItem label="Program ID" value={profile.programId || '—'} />
+                                </ColumnLayout>
+                            </Container>
+                        )}
+
                         {/* Presets + Plan */}
                         <div style={{ display:'flex', gap:12, alignItems:'center', flexWrap:'wrap' }}>
                             <Box variant="awsui-key-label">Range</Box>
@@ -243,6 +271,15 @@ function Stat({ label, value }) {
         <div>
             <Box variant="awsui-key-label">{label}</Box>
             <Box variant="strong">{value}</Box>
+        </div>
+    )
+}
+
+function ProfileItem({ label, value }) {
+    return (
+        <div>
+            <Box variant="awsui-key-label">{label}</Box>
+            <Box>{value}</Box>
         </div>
     )
 }
