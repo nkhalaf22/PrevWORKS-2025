@@ -1628,7 +1628,22 @@ export default function DashboardPage() {
         }))
         console.log(`📊 Loaded ${surveys.length} surveys from programs/${manageProgramId}/anon_surveys`)
 
-        const cohortSizesByDept = await initCohortSizesForProgram(manageProgramId)
+        const deptCollectionRef = collection(db, `programs/${manageProgramId}/departments`)
+        const deptCollectionSnap = await getDocs(deptCollectionRef)
+        let cohortSizesByDept = {}
+        if (!deptCollectionSnap.empty) {
+          deptCollectionSnap.docs.forEach(docSnap => {
+            const data = docSnap.data() || {}
+            const deptName = data.department || docSnap.id
+            if (!deptName) return
+            const size = Number(data.cohortSize)
+            cohortSizesByDept[deptName] = Number.isFinite(size) ? size : 0
+          })
+        }
+        if (Object.keys(cohortSizesByDept).length === 0) {
+          console.warn('⚠️ No cohort sizes found in departments collection; initializing from resident roster')
+          cohortSizesByDept = await initCohortSizesForProgram(manageProgramId)
+        }
         const responseRatesByDept = computeResponseRatesByDept(
             surveys,
             cohortSizesByDept,
@@ -2007,8 +2022,7 @@ export default function DashboardPage() {
     return null
   }, [caps.kpis, departmentFilter.value, active.cohortSizesByDept, surveysForResponseRate, active.responseRatesByDept, active.responseRate])
 
-  // Temporary override while keeping computed logic available
-  const responseRate = 80
+  const responseRate = computedResponseRate
   const responseRateDisplay = responseRate != null ? Number(responseRate).toFixed(1) : null
 
   // Derive readable start/end dates from ISO week keys for caption
