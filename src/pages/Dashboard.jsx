@@ -2002,6 +2002,8 @@ export default function DashboardPage() {
     }
 
     if (uniqueResidentIds.size === 0) return 0
+    return (uniqueResidentIds.size / cohortSize) * 100
+  }, [caps.kpis, departmentFilter.value, active.responseRatesByDept, active.responseRate, active.surveys, active.cohortSizesByDept, filteredTrend])
 
     const responseRate = computedResponseRate
     const responseRateDisplay = responseRate != null ? Number(responseRate).toFixed(1) : null
@@ -2544,7 +2546,7 @@ export default function DashboardPage() {
             toolsHide
         />
     )
-  })
+  }
 
 
   // ADD this new DistributionSection component (below other subcomponents)
@@ -2658,4 +2660,4 @@ export default function DashboardPage() {
     const value = rounded.toFixed(decimals)
     return `${rounded >= 0 ? '+' : ''}${value}`
   }
-}
+
